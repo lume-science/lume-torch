@@ -16,7 +16,6 @@ from lume_model.variables import (
     get_variable,
     ConfigEnum,
     ArrayVariable,
-    ImageVariable,
 )
 from lume_model.utils import (
     try_import_module,
@@ -280,10 +279,8 @@ class LUMEBaseModel(BaseModel, ABC):
           config for each output variable: {var_name: value}. Value can be "warn", "error", or "none".
     """
 
-    input_variables: list[Union[ScalarVariable, ArrayVariable, ImageVariable]]
-    output_variables: list[
-        Union[ScalarVariable, ArrayVariable, ImageVariable, DistributionVariable]
-    ]
+    input_variables: list[Union[ScalarVariable, ArrayVariable]]
+    output_variables: list[Union[ScalarVariable, ArrayVariable, DistributionVariable]]
     input_validation_config: Optional[dict[str, ConfigEnum]] = None
     output_validation_config: Optional[dict[str, ConfigEnum]] = None
 
@@ -302,7 +299,6 @@ class LUMEBaseModel(BaseModel, ABC):
                     (
                         ScalarVariable,
                         ArrayVariable,
-                        ImageVariable,
                         DistributionVariable,
                     ),
                 ):

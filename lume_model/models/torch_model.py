@@ -8,7 +8,7 @@ from pydantic import field_validator
 from botorch.models.transforms.input import ReversibleInputTransform
 
 from lume_model.base import LUMEBaseModel
-from lume_model.variables import ScalarVariable, ArrayVariable, ImageVariable
+from lume_model.variables import ScalarVariable, ArrayVariable
 from lume_model.models.utils import itemize_dict, format_inputs
 
 logger = logging.getLogger(__name__)
@@ -200,8 +200,8 @@ class TorchModel(LUMEBaseModel):
     def output_validation(self, output_dict: dict[str, Union[float, torch.Tensor]]):
         """Itemizes tensors before performing output validation."""
         for i, var in enumerate(self.output_variables):
-            if isinstance(var, (ArrayVariable, ImageVariable)):
-                # run the validation for ArrayVariable and ImageVariable
+            if isinstance(var, (ArrayVariable)):
+                # run the validation for ArrayVariable
                 super().output_validation({var.name: output_dict[var.name]})
             elif isinstance(var, ScalarVariable):
                 itemized_outputs = itemize_dict({var.name: output_dict[var.name]})

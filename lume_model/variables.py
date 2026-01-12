@@ -266,6 +266,33 @@ class DistributionVariable(Variable):
             )
 
 
+class ArrayValidatorMixin:
+    """Utility class providing common validation methods for array types.
+
+    Provides shared validation logic for shape, dtype, and type checking.
+    """
+
+    @staticmethod
+    def _validate_type(value: Any, base_type: Type, type_name: str) -> None:
+        """Validates that value is of the expected base type."""
+        if not isinstance(value, base_type):
+            raise TypeError(f"Value must be a {type_name}, got {type(value)}")
+
+    @staticmethod
+    def _validate_shape(value: Any, expected_shape: Tuple[int, ...] = None) -> None:
+        """Validates that value has the expected shape."""
+        if expected_shape and tuple(value.shape) != expected_shape:
+            raise ValueError(
+                f"Expected shape {expected_shape}, got {tuple(value.shape)}"
+            )
+
+    @staticmethod
+    def _validate_dtype(value: Any, expected_dtype: Any = None) -> None:
+        """Validates that value has the expected dtype."""
+        if expected_dtype and value.dtype != expected_dtype:
+            raise ValueError(f"Expected dtype {expected_dtype}, got {value.dtype}")
+
+
 class NumpyNDArray(np.ndarray):
     """Custom Pydantic-compatible type for numpy.ndarray."""
 
@@ -282,14 +309,9 @@ class NumpyNDArray(np.ndarray):
         expected_shape: Tuple[int, ...] = None,
         expected_dtype: np.dtype = None,
     ) -> np.ndarray:
-        if not isinstance(value, np.ndarray):
-            raise TypeError(f"Value must be a numpy.ndarray, got {type(value)}")
-        if expected_shape and tuple(value.shape) != expected_shape:
-            raise ValueError(
-                f"Expected shape {expected_shape}, got {tuple(value.shape)}"
-            )
-        if expected_dtype and value.dtype != expected_dtype:
-            raise ValueError(f"Expected dtype {expected_dtype}, got {value.dtype}")
+        ArrayValidatorMixin._validate_type(value, np.ndarray, "numpy.ndarray")
+        ArrayValidatorMixin._validate_shape(value, expected_shape)
+        ArrayValidatorMixin._validate_dtype(value, expected_dtype)
         return value
 
 
@@ -303,6 +325,14 @@ class TorchTensor(torch.Tensor):
         return core_schema.no_info_plain_validator_function(cls.validate)
 
     @classmethod
+    def _validate_device(cls, value: torch.Tensor, expected_device: str = None) -> None:
+        """Validates that tensor is on the expected device."""
+        if expected_device and value.device.type != expected_device:
+            raise ValueError(
+                f"Expected device {expected_device}, got {value.device.type}"
+            )
+
+    @classmethod
     def validate(
         cls,
         value: Any,
@@ -310,24 +340,19 @@ class TorchTensor(torch.Tensor):
         expected_dtype: torch.dtype = None,
         expected_device: str = None,
     ) -> torch.Tensor:
-        if not isinstance(value, torch.Tensor):
-            raise TypeError(f"Value must be a torch.Tensor, got {type(value)}")
-        if expected_shape and tuple(value.shape) != expected_shape:
-            raise ValueError(
-                f"Expected shape {expected_shape}, got {tuple(value.shape)}"
-            )
-        if expected_dtype and value.dtype != expected_dtype:
-            raise ValueError(f"Expected dtype {expected_dtype}, got {value.dtype}")
-        if expected_device and value.device.type != expected_device:
-            raise ValueError(
-                f"Expected device {expected_device}, got {value.device.type}"
-            )
+        ArrayValidatorMixin._validate_type(value, torch.Tensor, "torch.Tensor")
+        ArrayValidatorMixin._validate_shape(value, expected_shape)
+        ArrayValidatorMixin._validate_dtype(value, expected_dtype)
+        cls._validate_device(value, expected_device)
         return value
 
 
 class ArrayVariable(Variable):
     """
     Variable for array data (NumpyNDArray or TorchTensor).
+
+    Can also represent image data when num_channels is specified, which enforces
+    2D or 3D shapes and validates channel dimensions.
 
     Attributes:
         default_value: Default value for the variable.
@@ -337,6 +362,8 @@ class ArrayVariable(Variable):
         unit: Unit associated with the variable.
         array_type: Type of array, either 'numpy' or 'torch'.
         device: Device for torch.Tensor ('cpu' or 'cuda'), optional.
+        num_channels: Number of image channels (1 for grayscale, 3 for RGB).
+            When set, enables image-specific validation requiring 2D or 3D shapes.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, validate_assignment=True)
@@ -347,39 +374,124 @@ class ArrayVariable(Variable):
     unit: Optional[str] = None
     array_type: Literal["numpy", "torch"] = "torch"
     device: Optional[str] = None
+    num_channels: Optional[int] = (
+        None  # When set, enables image validation (1=grayscale, 3=RGB)
+    )
+
+    @property
+    def is_image(self) -> bool:
+        """Returns True if this variable represents image data."""
+        return self.num_channels is not None
 
     @property
     def default_validation_config(self):
         return "warn"
 
+    @property
+    def _validator_class(self) -> Type[ArrayValidatorMixin]:
+        """Returns the appropriate validator class based on array_type."""
+        return NumpyNDArray if self.array_type == "numpy" else TorchTensor
+
+    @property
+    def _expected_base_type(self) -> Type:
+        """Returns the expected base type for the array."""
+        return np.ndarray if self.array_type == "numpy" else torch.Tensor
+
+    def _validate_array(
+        self,
+        value: Union[NDArray, torch.Tensor],
+        expected_shape: Tuple[int, ...] = None,
+        expected_dtype: Any = None,
+    ) -> None:
+        """Common validation logic for array values.
+
+        Args:
+            value: The array value to validate.
+            expected_shape: Expected shape of the array.
+            expected_dtype: Expected dtype of the array.
+
+        Raises:
+            ValueError: If value is not the expected array type, or shape/dtype don't match.
+        """
+        if not isinstance(value, self._expected_base_type):
+            raise ValueError(
+                f"Expected value to be a {self._expected_base_type.__name__}, "
+                f"but received {type(value)}."
+            )
+
+        if self.array_type == "numpy":
+            NumpyNDArray.validate(
+                value,
+                expected_shape=expected_shape,
+                expected_dtype=expected_dtype,
+            )
+        elif self.array_type == "torch":
+            TorchTensor.validate(
+                value,
+                expected_shape=expected_shape,
+                expected_dtype=expected_dtype,
+                expected_device=self.device,
+            )
+
+    def _validate_image_shape(self, value: Union[NDArray, torch.Tensor]) -> None:
+        """Validates image-specific shape constraints.
+
+        Args:
+            value: The array value to validate.
+
+        Raises:
+            ValueError: If shape is not 2D or 3D, or channel count doesn't match.
+        """
+        if len(self.shape) not in (2, 3):
+            raise ValueError(
+                f"Image array expects shape to be 2D or 3D, got {self.shape}."
+            )
+        if len(value.shape) not in (2, 3):
+            raise ValueError(
+                f"Value for image array must be 2D or 3D, got {value.shape}."
+            )
+
+        # Validate channel count
+        if self.array_type == "numpy":
+            # NumPy images: (H, W) for grayscale or (H, W, C) for color
+            if len(value.shape) == 2 and self.num_channels != 1:
+                raise ValueError(
+                    f"Expected 1 channel for grayscale image, got {self.num_channels}."
+                )
+            elif len(value.shape) == 3 and value.shape[2] != self.num_channels:
+                raise ValueError(
+                    f"Expected {self.num_channels} channels, got {value.shape[2]}."
+                )
+        elif self.array_type == "torch":
+            # PyTorch images: (H, W) for grayscale or (C, H, W) for color
+            if len(value.shape) == 2 and self.num_channels != 1:
+                raise ValueError(
+                    f"Expected 1 channel for grayscale image, got {self.num_channels}."
+                )
+            elif len(value.shape) == 3 and value.shape[0] != self.num_channels:
+                raise ValueError(
+                    f"Expected {self.num_channels} channels, got {value.shape[0]}."
+                )
+
     @model_validator(mode="after")
     def validate_default_value(self):
         if self.default_value is not None:
-            if self.array_type == "numpy":
-                if isinstance(self.default_value, np.ndarray):
-                    NumpyNDArray.validate(
-                        self.default_value,
-                        expected_shape=self.shape,
-                        expected_dtype=self.dtype,
-                    )
-                else:
-                    raise TypeError(
-                        f"Expected default_value to be a numpy.ndarray, "
-                        f"but received {type(self.default_value)}."
-                    )
-            elif self.array_type == "torch":
-                if isinstance(self.default_value, torch.Tensor):
-                    TorchTensor.validate(
-                        self.default_value,
-                        expected_shape=self.shape,
-                        expected_dtype=self.dtype,
-                        expected_device=self.device,
-                    )
-                else:
-                    raise TypeError(
-                        f"Expected default_value to be a torch.Tensor, "
-                        f"but received {type(self.default_value)}."
-                    )
+            self._validate_array(
+                self.default_value,
+                expected_shape=self.shape,
+                expected_dtype=self.dtype,
+            )
+            if self.is_image:
+                self._validate_image_shape(self.default_value)
+        return self
+
+    @model_validator(mode="after")
+    def validate_image_shape_config(self):
+        """Validates that image configuration has valid 2D or 3D shape."""
+        if self.is_image and len(self.shape) not in (2, 3):
+            raise ValueError(
+                f"Image array expects shape to be 2D or 3D, got {len(self.shape)}D shape {self.shape}."
+            )
         return self
 
     def validate_value(
@@ -388,67 +500,17 @@ class ArrayVariable(Variable):
         _config = self.default_validation_config if config is None else config
         # mandatory validation
         print(value)
-        if self.array_type == "numpy":
-            NumpyNDArray.validate(
-                value,
-                expected_shape=self.shape,
-                expected_dtype=self.dtype,
-            )
-        elif self.array_type == "torch":
-            TorchTensor.validate(
-                value,
-                expected_shape=self.shape,
-                expected_dtype=self.dtype,
-                expected_device=self.device,
-            )
+        self._validate_array(
+            value,
+            expected_shape=self.shape,
+            expected_dtype=self.dtype,
+        )
+        # image-specific validation
+        if self.is_image:
+            self._validate_image_shape(value)
         # optional validation
         if config != "none":
             pass  # TODO: implement optional validation logic, like range checks, checking for NaNs, etc.
-
-
-class ImageVariable(ArrayVariable):
-    """
-    Variable for image data (2D or 3D numpy arrays or torch tensors).
-
-    Enforces that shape is 2D or 3D and allows for image-specific metadata.
-    """
-
-    num_channels: Optional[int] = None  # 1 (grayscale), or 3 (RGB))
-
-    def validate_value(self, value: Any, config: ConfigEnum = None):
-        # First, use ArrayVariable validation
-        super().validate_value(value, config)
-        # Then, enforce image shape
-        if len(self.shape) not in (2, 3):
-            raise ValueError(
-                f"ImageVariable expects shape to be 2D or 3D, got {self.shape}."
-            )
-        if len(value.shape) not in (2, 3):
-            raise ValueError(
-                f"Value for ImageVariable must be 2D or 3D, got {value.shape}."
-            )
-
-        # TODO: leave section below or delete?
-        if self.num_channels is not None:
-            # Check for numpy arrays and torch tensors
-            if self.array_type == "numpy":
-                if len(value.shape) == 2 and self.num_channels != 1:
-                    raise ValueError(
-                        f"Expected 1 channel for grayscale image, got {self.num_channels}."
-                    )
-                elif len(value.shape) == 3 and value.shape[2] != self.num_channels:
-                    raise ValueError(
-                        f"Expected {self.num_channels} channels, got {value.shape[2]}."
-                    )
-            elif self.array_type == "torch":
-                if len(value.shape) == 2 and self.num_channels != 1:
-                    raise ValueError(
-                        f"Expected 1 channel for grayscale image, got {self.num_channels}."
-                    )
-                elif len(value.shape) == 3 and value.shape[0] != self.num_channels:
-                    raise ValueError(
-                        f"Expected {self.num_channels} channels, got {value.shape[0]}."
-                    )
 
 
 def get_variable(name: str) -> Type[Variable]:
@@ -460,7 +522,7 @@ def get_variable(name: str) -> Type[Variable]:
     Returns:
         Variable subclass with the given name.
     """
-    classes = [ScalarVariable, DistributionVariable, ArrayVariable, ImageVariable]
+    classes = [ScalarVariable, DistributionVariable, ArrayVariable]
     class_lookup = {c.__name__: c for c in classes}
     if name not in class_lookup.keys():
         raise KeyError(
