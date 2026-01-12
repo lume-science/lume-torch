@@ -499,7 +499,6 @@ class ArrayVariable(Variable):
     ):
         _config = self.default_validation_config if config is None else config
         # mandatory validation
-        print(value)
         self._validate_array(
             value,
             expected_shape=self.shape,
