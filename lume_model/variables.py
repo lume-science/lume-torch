@@ -109,7 +109,7 @@ class ScalarVariable(Variable):
 
     @property
     def default_validation_config(self) -> ConfigEnum:
-        return "warn"
+        return "none"
 
     def validate_value(self, value: float, config: ConfigEnum = None):
         """
@@ -130,7 +130,7 @@ class ScalarVariable(Variable):
         self._validate_value_type(value)
         value = self._validate_shape(value)
         # optional validation for each scalar / element in the array
-        if config != "none":
+        if _config != "none":
             for v in value:
                 self._validate_value_is_within_range(v, config=_config)
 
@@ -357,7 +357,7 @@ class ArrayVariable(Variable):
     Attributes:
         default_value: Default value for the variable.
         name: Name of the variable.
-        shape: Shape of the array.
+        shape: Shape of the array (not including batch dimensions).
         dtype: Data type of the array.
         unit: Unit associated with the variable.
         array_type: Type of array, either 'numpy' or 'torch'.
@@ -385,7 +385,7 @@ class ArrayVariable(Variable):
 
     @property
     def default_validation_config(self):
-        return "warn"
+        return "none"
 
     @property
     def _validator_class(self) -> Type[ArrayValidatorMixin]:
@@ -407,7 +407,7 @@ class ArrayVariable(Variable):
 
         Args:
             value: The array value to validate.
-            expected_shape: Expected shape of the array.
+            expected_shape: Expected shape of the array (per-sample, excluding batch dims).
             expected_dtype: Expected dtype of the array.
 
         Raises:
@@ -419,16 +419,36 @@ class ArrayVariable(Variable):
                 f"but received {type(value)}."
             )
 
+        # For validation, check the last N dimensions match expected_shape
+        # This allows batch dimensions at the front
+        if expected_shape is not None:
+            actual_shape = tuple(value.shape)
+            expected_ndim = len(expected_shape)
+
+            # Check that we have at least as many dimensions as expected
+            if len(actual_shape) < expected_ndim:
+                raise ValueError(
+                    f"Expected at least {expected_ndim} dimensions with shape {expected_shape}, "
+                    f"got {len(actual_shape)} dimensions with shape {actual_shape}"
+                )
+
+            # Check that the last N dimensions match the expected shape
+            if actual_shape[-expected_ndim:] != expected_shape:
+                raise ValueError(
+                    f"Expected last {expected_ndim} dimension(s) to be {expected_shape}, "
+                    f"got {actual_shape[-expected_ndim:]}"
+                )
+
         if self.array_type == "numpy":
             NumpyNDArray.validate(
                 value,
-                expected_shape=expected_shape,
+                expected_shape=None,  # Don't validate shape here, already done above
                 expected_dtype=expected_dtype,
             )
         elif self.array_type == "torch":
             TorchTensor.validate(
                 value,
-                expected_shape=expected_shape,
+                expected_shape=None,  # Don't validate shape here, already done above
                 expected_dtype=expected_dtype,
                 expected_device=self.device,
             )
@@ -446,31 +466,43 @@ class ArrayVariable(Variable):
             raise ValueError(
                 f"Image array expects shape to be 2D or 3D, got {self.shape}."
             )
-        if len(value.shape) not in (2, 3):
+
+        # Extract the image dimensions (ignoring batch dimensions)
+        expected_ndim = len(self.shape)
+        if value.ndim < expected_ndim:
             raise ValueError(
-                f"Value for image array must be 2D or 3D, got {value.shape}."
+                f"Value for image array must have at least {expected_ndim} dimensions, got {value.ndim}."
+            )
+
+        # Get the last N dimensions (image dimensions without batch)
+        image_shape = value.shape[-expected_ndim:]
+
+        # Check that image dimensions are 2D or 3D
+        if len(image_shape) not in (2, 3):
+            raise ValueError(
+                f"Image dimensions must be 2D or 3D, got {len(image_shape)}D with shape {image_shape}."
             )
 
         # Validate channel count
         if self.array_type == "numpy":
-            # NumPy images: (H, W) for grayscale or (H, W, C) for color
-            if len(value.shape) == 2 and self.num_channels != 1:
+            # NumPy images: (H, W) for grayscale or (..., H, W, C) for color
+            if len(image_shape) == 2 and self.num_channels != 1:
                 raise ValueError(
                     f"Expected 1 channel for grayscale image, got {self.num_channels}."
                 )
-            elif len(value.shape) == 3 and value.shape[2] != self.num_channels:
+            elif len(image_shape) == 3 and image_shape[2] != self.num_channels:
                 raise ValueError(
-                    f"Expected {self.num_channels} channels, got {value.shape[2]}."
+                    f"Expected {self.num_channels} channels, got {image_shape[2]}."
                 )
         elif self.array_type == "torch":
-            # PyTorch images: (H, W) for grayscale or (C, H, W) for color
-            if len(value.shape) == 2 and self.num_channels != 1:
+            # PyTorch images: (H, W) for grayscale or (..., C, H, W) for color
+            if len(image_shape) == 2 and self.num_channels != 1:
                 raise ValueError(
                     f"Expected 1 channel for grayscale image, got {self.num_channels}."
                 )
-            elif len(value.shape) == 3 and value.shape[0] != self.num_channels:
+            elif len(image_shape) == 3 and image_shape[0] != self.num_channels:
                 raise ValueError(
-                    f"Expected {self.num_channels} channels, got {value.shape[0]}."
+                    f"Expected {self.num_channels} channels, got {image_shape[0]}."
                 )
 
     @model_validator(mode="after")

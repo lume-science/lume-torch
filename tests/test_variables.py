@@ -455,7 +455,7 @@ class TestArrayVariableImage:
         )
         # Wrong number of channels in first dimension
         tensor_wrong = torch.zeros((4, 64, 64), dtype=torch.float32)
-        with pytest.raises(ValueError, match="Expected shape"):
+        with pytest.raises(ValueError, match="Expected last "):
             var.validate_value(tensor_wrong)
 
     def test_image_wrong_channel_count_numpy(self):
@@ -469,7 +469,7 @@ class TestArrayVariableImage:
         )
         # Wrong number of channels in last dimension
         arr_wrong = np.zeros((64, 64, 4), dtype=np.float32)
-        with pytest.raises(ValueError, match="Expected shape"):
+        with pytest.raises(ValueError, match="Expected last "):
             var.validate_value(arr_wrong)
 
 

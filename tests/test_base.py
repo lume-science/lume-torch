@@ -106,7 +106,7 @@ class TestBaseModel:
             example_model.input_validation(input_dict)
 
         # setting strictness flag
-        assert input_variables[0].default_validation_config == "warn"
+        assert input_variables[0].default_validation_config == "none"
         with pytest.raises(ValueError):
             # has to be a ConfigEnum type
             example_model.input_validation_config = {input_variables[0].name: "test"}
