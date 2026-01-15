@@ -58,6 +58,10 @@ class ProbModelBaseModel(LUMEBaseModel):  # TODO: brainstorm a better name
                 f"expected one of ['double', 'single']."
             )
 
+    @property
+    def _tkwargs(self) -> dict:
+        return {"device": self.device, "dtype": self.dtype}
+
     def _arrange_inputs(
         self, d: dict[str, Union[float, torch.Tensor]]
     ) -> dict[str, Union[float, torch.Tensor]]:
@@ -150,20 +154,18 @@ class ProbModelBaseModel(LUMEBaseModel):  # TODO: brainstorm a better name
         Returns:
             Validated input dictionary.
         """
+        # validate original inputs (catches dtype mismatches)
+        super().input_validation(input_dict)
+
         # format inputs as tensors w/o changing the dtype
         formatted_inputs = format_inputs(input_dict.copy())
+
         # cast tensors to expected dtype and device
         formatted_inputs = {
-            k: v.to(**self._tkwargs) for k, v in formatted_inputs.items()
+            k: v.to(**self._tkwargs).squeeze(-1) for k, v in formatted_inputs.items()
         }
-        # validate based on variable class and config
-        super().input_validation(formatted_inputs)
 
-        # cast to desired shape, dtype and device
-        input_dict = {
-            k: v.to(**self._tkwargs).squeeze(-1) for k, v in input_dict.items()
-        }
-        return input_dict
+        return formatted_inputs
 
     def output_validation(self, output_dict: dict[str, TDistribution]):
         """Itemizes tensors before performing output validation."""
