@@ -113,11 +113,6 @@ class GPModel(ProbModelBaseModel):
             )
         return num_outputs
 
-    @property
-    def _tkwargs(self):
-        """Returns the device and dtype for the model."""
-        return {"device": self.device, "dtype": self.dtype}
-
     def likelihood(self):
         """Returns the likelihood of the model."""
         return self.model.likelihood
