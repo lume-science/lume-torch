@@ -357,7 +357,7 @@ class ArrayVariable(Variable):
     Attributes:
         default_value: Default value for the variable.
         name: Name of the variable.
-        shape: Shape of the array (not including batch dimensions).
+        shape: Shape of the array (per-sample, excluding batch dims).
         dtype: Data type of the array.
         unit: Unit associated with the variable.
         array_type: Type of array, either 'numpy' or 'torch'.
@@ -467,12 +467,8 @@ class ArrayVariable(Variable):
                 f"Image array expects shape to be 2D or 3D, got {self.shape}."
             )
 
-        # Extract the image dimensions (ignoring batch dimensions)
+        # Extract the expected image dimensions (ignoring batch dimensions)
         expected_ndim = len(self.shape)
-        if value.ndim < expected_ndim:
-            raise ValueError(
-                f"Value for image array must have at least {expected_ndim} dimensions, got {value.ndim}."
-            )
 
         # Get the last N dimensions (image dimensions without batch)
         image_shape = value.shape[-expected_ndim:]

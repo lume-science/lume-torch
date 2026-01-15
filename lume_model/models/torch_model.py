@@ -180,15 +180,7 @@ class TorchModel(LUMEBaseModel):
             Validated input dictionary.
         """
         # validate original inputs (catches dtype mismatches)
-        for name, value in input_dict.items():
-            if name in self.input_names:
-                var = self.input_variables[self.input_names.index(name)]
-                _config = (
-                    None
-                    if self.input_validation_config is None
-                    else self.input_validation_config.get(name)
-                )
-                var.validate_value(value, config=_config)
+        super().input_validation(input_dict)
 
         # format inputs as tensors w/o changing the dtype
         formatted_inputs = format_inputs(input_dict)
@@ -384,16 +376,20 @@ class TorchModel(LUMEBaseModel):
                     input_dict[var.name] = torch.tensor(
                         var.default_value, **self._tkwargs
                     )
-                return input_dict
+
         return input_dict
 
     def _arrange_inputs(
         self, formatted_inputs: dict[str, torch.Tensor]
     ) -> torch.Tensor:
-        """Enforces order of input variables.
+        """
+        Enforces ordering, batching, and default filling of inputs.
 
-        Enforces the order of the input variables to be passed to the transformers and model and updates the
-        returned tensor with default values for any inputs that are missing.
+        * If all inputs are `ArrayVariable`, stacks them into shape `(batch, num_arrays, *array_shape)`.
+        * If all inputs are `ScalarVariable`, concatenates them so the last dimension matches the number of inputs,
+         broadcasting defaults as needed.
+        * If a mix of array and scalar inputs is provided, raises `NotImplementedError`.
+        * Missing inputs are filled with their default values before arranging.
 
         Args:
             formatted_inputs: Dictionary of input variable names to tensors.
@@ -401,106 +397,108 @@ class TorchModel(LUMEBaseModel):
         Returns:
             Ordered input tensor to be passed to the transformers.
         """
-        # Build default values tensor, handling both scalar and array variables
-        default_list = []
-        for var in self.input_variables:
-            if isinstance(var, ArrayVariable):
-                # Array variables: keep as-is (already a tensor)
-                default_list.append(var.default_value)
-            else:  # ScalarVariable
-                # Scalar variables: handle both tensor and float default values
-                if isinstance(var.default_value, torch.Tensor):
-                    default_list.append(var.default_value.detach().clone())
-                else:
-                    # Handle float default values for ScalarVariable
-                    default_list.append(
-                        torch.tensor(var.default_value, **self._tkwargs)
-                    )
-
-        # Concatenate along the last dimension to create [total_features] tensor
-        default_tensor = torch.cat([d.flatten() for d in default_list]).to(
-            **self._tkwargs
+        contains_array = any(isinstance(v, ArrayVariable) for v in self.input_variables)
+        contains_scalar = any(
+            isinstance(v, ScalarVariable) for v in self.input_variables
         )
 
-        # Determine batch size from inputs
-        if formatted_inputs:
-            # Infer batch shape from first provided input
+        if contains_array and contains_scalar:
+            raise NotImplementedError(
+                "Mixing ScalarVariable and ArrayVariable inputs is not supported."
+            )
+
+        # All ArrayVariables
+        if contains_array:
+            tensor_list = []
             batch_shape = None
             for var in self.input_variables:
                 if var.name in formatted_inputs:
                     value = formatted_inputs[var.name]
-                    if isinstance(var, ArrayVariable):
-                        # Array: batch dims are all except last len(shape) dims
-                        expected_ndim = len(var.shape)
-                        batch_shape = (
-                            value.shape[:-expected_ndim]
-                            if expected_ndim > 0
-                            else value.shape
-                        )
-                    else:  # ScalarVariable
-                        # Scalar: batch dims are all except last 1 dim (if last dim is 0 or 1)
-                        if value.ndim > 0 and value.shape[-1] in (0, 1):
-                            batch_shape = value.shape[:-1]
-                        else:
-                            batch_shape = value.shape
+                else:
+                    value = (
+                        var.default_value.detach().clone()
+                        if isinstance(var.default_value, torch.Tensor)
+                        else torch.tensor(var.default_value, **self._tkwargs)
+                    )
+
+                expected_sample_shape = tuple(var.shape)
+                sample_ndim = len(expected_sample_shape)
+                if value.shape[-sample_ndim:] != expected_sample_shape:
+                    raise ValueError(
+                        f"Input {var.name} has shape {value.shape}, "
+                        f"expected sample shape {expected_sample_shape}"
+                    )
+
+                current_batch = value.shape[:-sample_ndim]
+                if current_batch == torch.Size():
+                    # No batch dim provided -> add singleton batch
+                    value = value.unsqueeze(0)
+                    current_batch = torch.Size([1])
+
+                if batch_shape is None:
+                    batch_shape = current_batch
+                elif current_batch != batch_shape:
+                    raise ValueError(
+                        f"Inputs have inconsistent batch shapes: "
+                        f"{batch_shape} vs {current_batch}"
+                    )
+
+                tensor_list.append(value.to(**self._tkwargs))
+
+            stacked = torch.stack(tensor_list, dim=1)  # (batch, num_arrays, ...)
+            print(f"Input tensor shape: {stacked.shape}")
+            return stacked
+
+        # All ScalarVariables
+        default_list = []
+        for var in self.input_variables:
+            if isinstance(var.default_value, torch.Tensor):
+                default_list.append(var.default_value.detach().clone())
+            else:
+                default_list.append(torch.tensor(var.default_value, **self._tkwargs))
+
+        default_tensor = torch.cat([d.flatten() for d in default_list]).to(
+            **self._tkwargs
+        )
+
+        if formatted_inputs:
+            batch_shape = None
+            for var in self.input_variables:
+                if var.name in formatted_inputs:
+                    value = formatted_inputs[var.name]
+                    if value.ndim > 0 and value.shape[-1] in (0, 1):
+                        batch_shape = value.shape[:-1]
+                    else:
+                        batch_shape = value.shape
                     break
 
-            # Build input tensor with correct batch shape
             if batch_shape and len(batch_shape) > 0:
-                # Has batch dimensions - expand default tensor
                 expanded_shape = (*batch_shape, default_tensor.shape[0])
                 input_tensor = (
                     default_tensor.unsqueeze(0).expand(expanded_shape).clone()
                 )
             else:
-                # No batch dimensions, use default with single batch dim
                 input_tensor = default_tensor.unsqueeze(0)
 
-            # Fill in provided values
             current_idx = 0
             for var in self.input_variables:
                 if var.name in formatted_inputs:
                     value = formatted_inputs[var.name]
-                    if isinstance(var, ArrayVariable):
-                        # Array variable: assign the full array
-                        num_features = var.default_value.numel()
-                        # Flatten only the feature dimensions, keep batch dims
-                        expected_ndim = len(var.shape)
-                        if value.ndim > expected_ndim:
-                            # Has batch dimensions
-                            batch_dims = value.ndim - expected_ndim
-                            flat_value = value.reshape(*value.shape[:batch_dims], -1)
-                        else:
-                            flat_value = value.flatten()
-                        input_tensor[..., current_idx : current_idx + num_features] = (
-                            flat_value
-                        )
-                    else:  # ScalarVariable
-                        # Scalar variable: squeeze last dim if it's 1 (batch format)
-                        if value.ndim > 0 and value.shape[-1] == 1:
-                            input_tensor[..., current_idx] = value.squeeze(-1)
-                        else:
-                            input_tensor[..., current_idx] = value
-
-                # Update index
-                if isinstance(var, ArrayVariable):
-                    current_idx += var.default_value.numel()
-                else:
-                    current_idx += 1
+                    if value.ndim > 0 and value.shape[-1] == 1:
+                        input_tensor[..., current_idx] = value.squeeze(-1)
+                    else:
+                        input_tensor[..., current_idx] = value
+                current_idx += 1
         else:
-            # No inputs provided, use default tensor with batch dimension
             input_tensor = default_tensor.unsqueeze(0)
 
-        # Validate total feature dimension
-        expected_features = sum(
-            var.default_value.numel() if isinstance(var, ArrayVariable) else 1
-            for var in self.input_variables
-        )
+        expected_features = len(self.input_variables)
         if input_tensor.shape[-1] != expected_features:
             raise ValueError(
-                f"Last dimension of input tensor doesn't match the expected number of features\n"
+                "Last dimension of input tensor doesn't match the expected number of features\n"
                 f"received: {input_tensor.shape}, expected {expected_features} as the last dimension"
             )
+
         return input_tensor
 
     def _transform_inputs(self, input_tensor: torch.Tensor) -> torch.Tensor:

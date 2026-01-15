@@ -369,13 +369,18 @@ class LUMEBaseModel(BaseModel, ABC):
 
     def input_validation(self, input_dict: dict[str, Any]) -> dict[str, Any]:
         for name, value in input_dict.items():
-            _config = (
-                None
-                if self.input_validation_config is None
-                else self.input_validation_config.get(name)
-            )
-            var = self.input_variables[self.input_names.index(name)]
-            var.validate_value(value, config=_config)
+            if name in self.input_names:
+                _config = (
+                    None
+                    if self.input_validation_config is None
+                    else self.input_validation_config.get(name)
+                )
+                var = self.input_variables[self.input_names.index(name)]
+                var.validate_value(value, config=_config)
+            else:
+                raise ValueError(
+                    f"Input variable {name} not found in model input variables."
+                )
         return input_dict
 
     def output_validation(self, output_dict: dict[str, Any]) -> dict[str, Any]:
