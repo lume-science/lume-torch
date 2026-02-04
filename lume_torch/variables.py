@@ -5,21 +5,24 @@ but they can be used to validate encountered values.
 """
 
 import logging
-from typing import Any, Optional, Tuple, Type
+from typing import Any, Optional, Tuple, Type, Union
 
 import torch
 from torch import Tensor
 from torch.distributions import Distribution as TDistribution
-from pydantic import field_validator, model_validator
+from pydantic import field_validator, model_validator, ConfigDict
 
 from lume.variables import Variable, ScalarVariable, NDVariable, ConfigEnum
 
 logger = logging.getLogger(__name__)
 
+# Rename base ScalarVariable for internal use
+_BaseScalarVariable = ScalarVariable
+
 # Re-export base classes for backward compatibility and clean API
 __all__ = [
     "Variable",
-    "ScalarVariable",
+    "ScalarVariable",  # This will be TorchScalarVariable for backwards compatibility
     "NDVariable",
     "TorchNDVariable",
     "ConfigEnum",
@@ -73,6 +76,144 @@ class DistributionVariable(Variable):
                 f"Expected value to be of type {TDistribution}, "
                 f"but received {type(value)}."
             )
+
+
+class TorchScalarVariable(_BaseScalarVariable):
+    """Variable for scalar values represented as PyTorch tensors.
+
+    This class extends ScalarVariable to support scalar values as torch.Tensor
+    with 0 or 1 dimensions (i.e., a scalar tensor or a single-element tensor).
+
+    Attributes
+    ----------
+    default_value : Tensor | None
+        Default value for the variable (must be 0D or 1D with size 1).
+    dtype : torch.dtype | None
+        Optional data type of the tensor. If specified, validates that tensor values
+        match this exact dtype. If None (default), only validates that the dtype is
+        a floating-point type without enforcing a specific precision.
+    value_range : tuple[float, float] | None
+        Value range that is considered valid for the variable.
+    unit : str | None
+        Unit associated with the variable.
+
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    default_value: Optional[Union[Tensor, float]] = None
+    dtype: Optional[torch.dtype] = None
+
+    @field_validator("dtype", mode="before")
+    @classmethod
+    def validate_dtype(cls, value):
+        """Convert dtype string to torch dtype if needed and validate it's a float type."""
+        if value is None:
+            return None
+
+        if isinstance(value, str):
+            dtype_map = {
+                "float16": torch.float16,
+                "float32": torch.float32,
+                "float64": torch.float64,
+                "half": torch.half,
+                "float": torch.float,
+                "double": torch.double,
+            }
+            if value in dtype_map:
+                value = dtype_map[value]
+            else:
+                raise ValueError(
+                    f"Unknown or unsupported dtype string: {value}. "
+                    f"Supported dtypes are: {list(dtype_map.keys())}"
+                )
+
+        # Validate that the dtype is a floating-point type
+        if not value.is_floating_point:
+            raise ValueError(f"dtype must be a floating-point type, got {value}")
+        return value
+
+    @model_validator(mode="after")
+    def validate_default_value(self):
+        if self.default_value is not None:
+            self._validate_value_type(self.default_value)
+            self._validate_dtype(self.default_value)
+            if self.value_range is not None:
+                scalar_value = (
+                    self.default_value.item()
+                    if isinstance(self.default_value, Tensor)
+                    else self.default_value
+                )
+                if not self._value_is_within_range(scalar_value):
+                    raise ValueError(
+                        "Default value ({}) is out of valid range: ([{},{}]).".format(
+                            scalar_value, *self.value_range
+                        )
+                    )
+        return self
+
+    def validate_value(self, value: Union[Tensor, float], config: ConfigEnum = None):
+        """Validates the given tensor or float value.
+
+        Parameters
+        ----------
+        value : Tensor | float
+            The value to be validated. If a tensor, must be 0D or 1D with size 1.
+        config : ConfigEnum, optional
+            The configuration for validation. Defaults to None.
+            Allowed values are "none", "warn", and "error".
+
+        Raises
+        ------
+        TypeError
+            If the value is not a torch.Tensor or float.
+        ValueError
+            If a tensor has more than 1 dimension, or if 1D with size != 1,
+            or if tensor dtype is not a float type, or if value is out of range.
+
+        """
+        config = self.default_validation_config if config is None else config
+        if isinstance(config, str):
+            config = ConfigEnum(config)
+
+        # mandatory validation
+        self._validate_value_type(value)
+        self._validate_dtype(value)
+
+        # optional validation
+        if config != ConfigEnum.NULL:
+            scalar_value = value.item() if isinstance(value, Tensor) else value
+            self._validate_value_is_within_range(scalar_value, config=config)
+
+    def _validate_value_type(self, value):
+        """Validates that value is a torch.Tensor (0D, 1D or batched 1D) or a regular float/int."""
+        if isinstance(value, Tensor):
+            if value.ndim == 0:
+                pass  # scalar tensor, valid
+            elif value.ndim == 1:
+                pass  # 1D tensor (single scalar or batch of scalars), valid
+            elif value.ndim > 1 and value.shape[-1] == 1:
+                pass  # Batched scalars with shape (batch_size, 1, ...), valid
+            else:
+                raise ValueError(
+                    f"Expected tensor with 0 or 1 dimensions, or multi-dimensional tensor "
+                    f"with last dimension equal to 1 for batched scalar values, "
+                    f"but got {value.ndim} dimensions with shape {value.shape}."
+                )
+        else:
+            # Delegate to parent class for non-tensor validation
+            _BaseScalarVariable._validate_value_type(value)
+
+    def _validate_dtype(self, value):
+        """Validates the dtype of the tensor is a float type. Skips check for regular floats."""
+        if not isinstance(value, Tensor):
+            return  # Regular floats don't have dtype to validate
+        if not value.dtype.is_floating_point:
+            raise ValueError(
+                f"Expected tensor dtype to be a floating-point type, got {value.dtype}."
+            )
+        if self.dtype and value.dtype != self.dtype:
+            raise ValueError(f"Expected dtype {self.dtype}, got {value.dtype}")
 
 
 class TorchNDVariable(NDVariable):
@@ -159,6 +300,10 @@ class TorchNDVariable(NDVariable):
         self._validate_dtype(value, self.dtype)
 
 
+# Alias TorchScalarVariable as ScalarVariable for backwards compatibility
+ScalarVariable = TorchScalarVariable
+
+
 def get_variable(name: str) -> Type[Variable]:
     """Returns the Variable subclass with the given name.
 
@@ -175,6 +320,8 @@ def get_variable(name: str) -> Type[Variable]:
     """
     classes = [ScalarVariable, DistributionVariable, TorchNDVariable]
     class_lookup = {c.__name__: c for c in classes}
+    # Also allow "ScalarVariable" to map to TorchScalarVariable
+    class_lookup["ScalarVariable"] = ScalarVariable
     if name not in class_lookup.keys():
         logger.error(
             f"Unknown variable type '{name}', valid names are {list(class_lookup.keys())}"
