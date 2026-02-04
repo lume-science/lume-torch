@@ -4,14 +4,28 @@ from typing import Union, Dict
 from pydantic import BaseModel, ConfigDict
 import torch
 from torch.distributions import Distribution
+import numpy as np
+
+
+def _flatten_and_itemize(value):
+    if isinstance(value, torch.Tensor):
+        return [v.item() for v in value.flatten()]
+    elif isinstance(value, np.ndarray):
+        return [v.item() if hasattr(v, "item") else v for v in value.flatten()]
+    else:
+        return [value]
+
 
 logger = logging.getLogger(__name__)
 
 
 def itemize_dict(
-    d: dict[str, Union[float, torch.Tensor, Distribution]],
-) -> list[dict[str, Union[float, torch.Tensor]]]:
-    """Itemizes the given in-/output dictionary.
+    d: dict[str, Union[float, torch.Tensor, np.ndarray, Distribution]],
+) -> list[dict[str, Union[float, torch.Tensor, np.ndarray]]]:
+    """
+    Converts a dictionary of values (floats, numpy arrays, or torch tensors) into a flat list of dictionaries,
+    each containing the key-value pairs for the scalar elements in the original arrays/tensors.
+    If the input dictionary contains only scalars (no arrays/tensors), returns a list with the original dict.
 
     Parameters
     ----------
@@ -24,15 +38,18 @@ def itemize_dict(
         List of in-/output dictionaries, each containing only a single value per in-/output.
 
     """
-    has_tensors = any([isinstance(value, torch.Tensor) for value in d.values()])
+    has_arrays = any(
+        isinstance(value, (torch.Tensor, np.ndarray)) for value in d.values()
+    )
     itemized_dicts = []
-    if has_tensors:
+    if has_arrays:
         for k, v in d.items():
-            for i, ele in enumerate(v.flatten()):
+            flat = _flatten_and_itemize(v)
+            for i, ele in enumerate(flat):
                 if i >= len(itemized_dicts):
-                    itemized_dicts.append({k: ele.item()})
+                    itemized_dicts.append({k: ele})
                 else:
-                    itemized_dicts[i][k] = ele.item()
+                    itemized_dicts[i][k] = ele
     else:
         itemized_dicts = [d]
     return itemized_dicts

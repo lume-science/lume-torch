@@ -164,18 +164,6 @@ class GPModel(ProbModelBaseModel):
             )
         return num_outputs
 
-    @property
-    def _tkwargs(self):
-        """Return tensor keyword arguments for this GP model.
-
-        Returns
-        -------
-        dict
-            Dictionary with ``"device"`` and ``"dtype"`` keys.
-
-        """
-        return {"device": self.device, "dtype": self.dtype}
-
     def likelihood(self):
         """Return the likelihood module of the underlying GP model.
 

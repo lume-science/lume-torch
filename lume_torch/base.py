@@ -10,7 +10,13 @@ import yaml
 import numpy as np
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from lume_torch.variables import ScalarVariable, get_variable, ConfigEnum
+from lume_torch.variables import (
+    ScalarVariable,
+    get_variable,
+    ConfigEnum,
+    DistributionVariable,
+    TorchNDVariable,
+)
 from lume_torch.utils import (
     try_import_module,
     verify_unique_variable_names,
@@ -378,8 +384,8 @@ class LUMEBaseModel(BaseModel, ABC):
 
     """
 
-    input_variables: list[ScalarVariable]
-    output_variables: list[ScalarVariable]
+    input_variables: list[Union[ScalarVariable, TorchNDVariable]]
+    output_variables: list[Union[ScalarVariable, TorchNDVariable, DistributionVariable]]
     input_validation_config: Optional[dict[str, ConfigEnum]] = None
     output_validation_config: Optional[dict[str, ConfigEnum]] = None
 
@@ -411,7 +417,14 @@ class LUMEBaseModel(BaseModel, ABC):
                 if isinstance(val, dict):
                     variable_class = get_variable(val["variable_class"])
                     new_value.append(variable_class(name=name, **val))
-                elif isinstance(val, ScalarVariable):
+                elif isinstance(
+                    val,
+                    (
+                        ScalarVariable,
+                        TorchNDVariable,
+                        DistributionVariable,
+                    ),
+                ):
                     new_value.append(val)
                 else:
                     raise TypeError(f"type {type(val)} not supported")
@@ -510,13 +523,18 @@ class LUMEBaseModel(BaseModel, ABC):
 
         """
         for name, value in input_dict.items():
-            _config = (
-                "none"
-                if self.input_validation_config is None
-                else self.input_validation_config.get(name)
-            )
-            var = self.input_variables[self.input_names.index(name)]
-            var.validate_value(value, config=_config)
+            if name in self.input_names:
+                _config = (
+                    None
+                    if self.input_validation_config is None
+                    else self.input_validation_config.get(name)
+                )
+                var = self.input_variables[self.input_names.index(name)]
+                var.validate_value(value, config=_config)
+            else:
+                raise ValueError(
+                    f"Input variable {name} not found in model input variables."
+                )
         return input_dict
 
     def output_validation(self, output_dict: dict[str, Any]) -> dict[str, Any]:
