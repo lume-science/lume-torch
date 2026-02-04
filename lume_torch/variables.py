@@ -36,10 +36,6 @@ class DistributionVariable(Variable):
 
     unit: Optional[str] = None
 
-    @property
-    def default_validation_config(self) -> ConfigEnum:
-        return "none"
-
     def validate_value(self, value: TDistribution, config: ConfigEnum = None):
         """Validates the given value.
 
@@ -57,11 +53,13 @@ class DistributionVariable(Variable):
             If the value is not an instance of Distribution.
 
         """
-        _config = self.default_validation_config if config is None else config
+        config = self.default_validation_config if config is None else config
+        if isinstance(config, str):
+            config = ConfigEnum(config)
         # mandatory validation
         self._validate_value_type(value)
         # optional validation
-        if config != "none":
+        if config != ConfigEnum.NULL:
             pass  # not implemented
 
     @staticmethod
