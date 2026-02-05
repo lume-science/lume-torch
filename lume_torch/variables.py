@@ -179,6 +179,7 @@ class TorchScalarVariable(_BaseScalarVariable):
         # mandatory validation
         self._validate_value_type(value)
         self._validate_dtype(value)
+        self._validate_read_only(value)
 
         # optional validation
         if config != ConfigEnum.NULL:
@@ -214,6 +215,43 @@ class TorchScalarVariable(_BaseScalarVariable):
             )
         if self.dtype and value.dtype != self.dtype:
             raise ValueError(f"Expected dtype {self.dtype}, got {value.dtype}")
+
+    def _validate_read_only(self, value: Union[Tensor, float]):
+        """Validates that read-only variables match their default value.
+
+        Handles batched tensors by ensuring ALL values in the batch equal the default.
+        """
+        if not self.read_only:
+            return
+
+        if self.default_value is None:
+            raise ValueError(
+                f"Variable '{self.name}' is read-only but has no default value."
+            )
+
+        # Extract scalar value from default if it's a tensor
+        if isinstance(self.default_value, Tensor):
+            expected_scalar = self.default_value.item()
+        else:
+            expected_scalar = self.default_value
+
+        # Compare based on actual value type
+        if isinstance(value, Tensor):
+            # For batched tensors, check that ALL values equal the default
+            # Broadcast expected to match value's shape for comparison
+            expected_broadcasted = torch.full_like(value, expected_scalar)
+            values_match = torch.allclose(
+                value, expected_broadcasted, rtol=1e-9, atol=1e-9
+            )
+        else:
+            # Scalar comparison
+            values_match = abs(expected_scalar - value) < 1e-9
+
+        if not values_match:
+            raise ValueError(
+                f"Variable '{self.name}' is read-only and must equal its default value "
+                f"({expected_scalar}), but received {value}."
+            )
 
 
 class TorchNDVariable(NDVariable):
@@ -268,6 +306,47 @@ class TorchNDVariable(NDVariable):
         if expected_dtype and value.dtype != expected_dtype:
             raise ValueError(f"Expected dtype {expected_dtype}, got {value.dtype}")
 
+    def _validate_read_only(self, value: Tensor) -> None:
+        """Validates that read-only ND variables match their default value.
+
+        Uses element-wise comparison for arrays/images.
+        Handles batched tensors by comparing each batch element to the default.
+        """
+        if not self.read_only:
+            return
+
+        if self.default_value is None:
+            raise ValueError(
+                f"Variable '{self.name}' is read-only but has no default value."
+            )
+
+        # Get the expected shape dimensions
+        expected_ndim = len(self.shape)
+
+        # Check if value is batched
+        if value.ndim > expected_ndim:
+            # Batched input - compare each batch item to default
+            # Reshape value to (batch_size, -1) and default to (-1)
+            _ = value.shape[:-expected_ndim] if expected_ndim > 0 else value.shape[:-1]
+            value_flat = value.reshape(-1, *self.shape)
+
+            # Check all batch items against default
+            for i in range(value_flat.shape[0]):
+                if not torch.allclose(
+                    value_flat[i], self.default_value, rtol=1e-9, atol=1e-9
+                ):
+                    raise ValueError(
+                        f"Variable '{self.name}' is read-only and must equal its default value, "
+                        f"but received different array values in batch element {i}."
+                    )
+        else:
+            # Single input - direct comparison
+            if not torch.allclose(value, self.default_value, rtol=1e-9, atol=1e-9):
+                raise ValueError(
+                    f"Variable '{self.name}' is read-only and must equal its default value, "
+                    f"but received different array values."
+                )
+
     def _get_image_shape_for_validation(self, value: Tensor) -> Tuple[int, ...]:
         """Returns image shape for PyTorch (C, H, W) format."""
         expected_ndim = len(self.shape)
@@ -298,6 +377,7 @@ class TorchNDVariable(NDVariable):
     def validate_value(self, value: Tensor, config: str = None):
         super().validate_value(value, config)
         self._validate_dtype(value, self.dtype)
+        self._validate_read_only(value)
 
 
 # Alias TorchScalarVariable as ScalarVariable for backwards compatibility
