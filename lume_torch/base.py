@@ -40,6 +40,11 @@ JSON_ENCODERS = {
     np.float64: lambda x: float(x),
 }
 
+# Add torch.Tensor encoder if torch is available
+torch = try_import_module("torch")
+if torch is not None:
+    JSON_ENCODERS[torch.Tensor] = lambda x: x.tolist()
+
 
 def process_torch_module(
     module,
