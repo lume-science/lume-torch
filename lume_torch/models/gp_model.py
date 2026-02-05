@@ -13,7 +13,7 @@ from linear_operator.utils.cholesky import psd_safe_cholesky
 from linear_operator.operators import DiagLinearOperator
 
 from lume_torch.models.prob_model_base import (
-    ProbModelBaseModel,
+    ProbabilisticBaseModel,
     TorchDistributionWrapper,
 )
 
@@ -21,7 +21,7 @@ from lume_torch.models.prob_model_base import (
 logger = logging.getLogger(__name__)
 
 
-class GPModel(ProbModelBaseModel):
+class GPModel(ProbabilisticBaseModel):
     """LUME-model class for Gaussian process (GP) models.
 
     This class wraps BoTorch/GPyTorch GP models (``SingleTaskGP``, ``MultiTaskGP``,
@@ -198,7 +198,7 @@ class GPModel(ProbModelBaseModel):
     ) -> dict[str, TDistribution]:
         """Get predictive distributions from the GP model.
 
-        This implements the abstract method from :class:`ProbModelBaseModel` by
+        This implements the abstract method from :class:`ProbabilisticBaseModel` by
         constructing a BoTorch posterior and wrapping it as a distribution over
         the outputs.
 
