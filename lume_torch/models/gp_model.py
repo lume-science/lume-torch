@@ -69,16 +69,6 @@ class GPModel(ProbModelBaseModel):
         list[OutcomeTransform | ReversibleInputTransform | torch.nn.Linear] | None
     ) = None
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        self.input_transformers = (
-            [] if self.input_transformers is None else self.input_transformers
-        )
-        self.output_transformers = (
-            [] if self.output_transformers is None else self.output_transformers
-        )
-
     @field_validator("model", mode="before")
     def validate_gp_model(cls, v):
         if isinstance(v, (str, os.PathLike)):
@@ -92,6 +82,8 @@ class GPModel(ProbModelBaseModel):
 
     @field_validator("input_transformers", "output_transformers", mode="before")
     def validate_transformers(cls, v):
+        if v is None:
+            return []
         if not isinstance(v, list):
             logger.error(f"Transformers must be a list, got {type(v)}")
             raise ValueError("Transformers must be passed as list.")
@@ -105,8 +97,7 @@ class GPModel(ProbModelBaseModel):
                     logger.error(f"Transformer file not found: {t}")
                     raise OSError(f"File {t} is not found.")
             loaded_transformers.append(t)
-        v = loaded_transformers
-        return v
+        return loaded_transformers
 
     def get_input_size(self) -> int:
         """Get the dimensionality of the input space.
@@ -123,20 +114,27 @@ class GPModel(ProbModelBaseModel):
 
         """
         if isinstance(self.model, SingleTaskGP):
-            num_inputs = self.model.train_inputs[0].shape[-1]
+            return self.model.train_inputs[0].shape[-1]
         elif isinstance(self.model, MultiTaskGP):
-            num_inputs = self.model.train_inputs[0].shape[-1] - 1
+            return self.model.train_inputs[0].shape[-1] - 1
         elif isinstance(self.model, ModelListGP):
-            if isinstance(self.model.models[0], SingleTaskGP):
-                num_inputs = self.model.models[0].train_inputs[0].shape[-1]
-            elif isinstance(self.model.models[0], MultiTaskGP):
-                num_inputs = self.model.models[0].train_inputs[0].shape[-1] - 1
+            first_model = self.model.models[0]
+            if isinstance(first_model, SingleTaskGP):
+                return first_model.train_inputs[0].shape[-1]
+            elif isinstance(first_model, MultiTaskGP):
+                return first_model.train_inputs[0].shape[-1] - 1
+            else:
+                logger.error(
+                    f"Unsupported model type in ModelListGP: {type(first_model)}"
+                )
+                raise ValueError(
+                    "ModelListGP must contain SingleTaskGP or MultiTaskGP models."
+                )
         else:
             logger.error(f"Unsupported GP model type: {type(self.model)}")
             raise ValueError(
                 "Model must be an instance of SingleTaskGP, MultiTaskGP or ModelListGP."
             )
-        return num_inputs
 
     def get_output_size(self) -> int:
         """Get the dimensionality of the output space.
@@ -153,16 +151,14 @@ class GPModel(ProbModelBaseModel):
 
         """
         if isinstance(self.model, ModelListGP):
-            num_outputs = sum(model.num_outputs for model in self.model.models)
-        elif isinstance(self.model, SingleTaskGP) or isinstance(
-            self.model, MultiTaskGP
-        ):
-            num_outputs = self.model.num_outputs
+            return sum(model.num_outputs for model in self.model.models)
+        elif isinstance(self.model, (SingleTaskGP, MultiTaskGP)):
+            return self.model.num_outputs
         else:
+            logger.error(f"Unsupported GP model type: {type(self.model)}")
             raise ValueError(
                 "Model must be an instance of SingleTaskGP, MultiTaskGP or ModelListGP."
             )
-        return num_outputs
 
     def likelihood(self):
         """Return the likelihood module of the underlying GP model.
@@ -224,7 +220,7 @@ class GPModel(ProbModelBaseModel):
         # Create tensor from input_dict
         x = super()._create_tensor_from_dict(input_dict)
         # Transform the input
-        if self.input_transformers is not None:
+        if self.input_transformers:
             x = self._transform_inputs(x)
         # Get the posterior distribution
         posterior = self._posterior(x, observation_noise=observation_noise)
@@ -331,7 +327,7 @@ class GPModel(ProbModelBaseModel):
             # Check that the covariance matrix is positive definite
             _cov = self._check_covariance_matrix(_cov)
 
-            if self.output_transformers is not None:
+            if self.output_transformers:
                 # TODO: make this more robust?
                 # If we have two outputs, but transformer has length 1 (e.g. multitask),
                 # we should apply the same transform to both outputs
@@ -363,7 +359,53 @@ class GPModel(ProbModelBaseModel):
                 input_tensor = transformer(input_tensor)
         return input_tensor
 
-    def _transform_mean(self, mean: torch.Tensor, i) -> torch.Tensor:
+    def _get_transformer_params(
+        self, transformer, i: int
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """Extract scale factor and offset from a transformer.
+
+        Parameters
+        ----------
+        transformer : ReversibleInputTransform or OutcomeTransform
+            The transformer to extract parameters from.
+        i : int
+            Index of the output dimension.
+
+        Returns
+        -------
+        tuple of (torch.Tensor, torch.Tensor | None)
+            Scale factor and offset (offset is None for covariance transforms).
+
+        Raises
+        ------
+        NotImplementedError
+            If the transformer type is not supported.
+
+        """
+        if isinstance(transformer, ReversibleInputTransform):
+            try:
+                scale_fac = transformer.coefficient[i]
+                offset = transformer.offset[i]
+            except IndexError:
+                # If the transformer has only one coefficient, use it for all outputs
+                # This is needed in the case of multitask models
+                scale_fac = transformer.coefficient[0]
+                offset = transformer.offset[0]
+        elif isinstance(transformer, OutcomeTransform):
+            try:
+                scale_fac = transformer.stdvs.squeeze(0)[i]
+                offset = transformer.means.squeeze(0)[i]
+            except IndexError:
+                # If the transformer has only one coefficient, use it for all outputs
+                scale_fac = transformer.stdvs.squeeze(0)[0]
+                offset = transformer.means.squeeze(0)[0]
+        else:
+            raise NotImplementedError(
+                f"Output transformer {type(transformer)} is not supported."
+            )
+        return scale_fac, offset
+
+    def _transform_mean(self, mean: torch.Tensor, i: int) -> torch.Tensor:
         """(Un-)transform the model output mean.
 
         Parameters
@@ -380,29 +422,8 @@ class GPModel(ProbModelBaseModel):
 
         """
         for transformer in self.output_transformers:
-            if isinstance(transformer, ReversibleInputTransform):
-                try:
-                    scale_fac = transformer.coefficient[i]
-                    offset = transformer.offset[i]
-                except IndexError:
-                    # If the transformer has only one coefficient, use it for all outputs
-                    # This is needed in the case of multitask models
-                    scale_fac = transformer.coefficient[0]
-                    offset = transformer.offset[0]
-                mean = offset + scale_fac * mean
-            elif isinstance(transformer, OutcomeTransform):
-                try:
-                    scale_fac = transformer.stdvs.squeeze(0)[i]
-                    offset = transformer.means.squeeze(0)[i]
-                except IndexError:
-                    # If the transformer has only one coefficient, use it for all outputs
-                    scale_fac = transformer.stdvs.squeeze(0)[0]
-                    offset = transformer.means.squeeze(0)[0]
-                mean = offset + scale_fac * mean
-            else:
-                raise NotImplementedError(
-                    f"Output transformer {type(transformer)} is not supported."
-                )
+            scale_fac, offset = self._get_transformer_params(transformer, i)
+            mean = offset + scale_fac * mean
         return mean
 
     def _transform_covar(self, cov: torch.Tensor, i: int) -> torch.Tensor:
@@ -422,28 +443,10 @@ class GPModel(ProbModelBaseModel):
 
         """
         for transformer in self.output_transformers:
-            if isinstance(transformer, ReversibleInputTransform):
-                try:
-                    scale_fac = transformer.coefficient[i]
-                except IndexError:
-                    # If the transformer has only one coefficient, use it for all outputs
-                    scale_fac = transformer.coefficient[0]
-                scale_fac = scale_fac.expand(cov.shape[:-1])
-                scale_mat = DiagLinearOperator(scale_fac)
-                cov = scale_mat @ cov @ scale_mat
-            elif isinstance(transformer, OutcomeTransform):
-                try:
-                    scale_fac = transformer.stdvs.squeeze(0)[i]
-                except IndexError:
-                    # If the transformer has only one coefficient, use it for all outputs
-                    scale_fac = transformer.stdvs.squeeze(0)[0]
-                scale_fac = scale_fac.expand(cov.shape[:-1])
-                scale_mat = DiagLinearOperator(scale_fac)
-                cov = scale_mat @ cov @ scale_mat
-            else:
-                raise NotImplementedError(
-                    f"Output transformer {type(transformer)} is not supported."
-                )
+            scale_fac, _ = self._get_transformer_params(transformer, i)
+            scale_fac = scale_fac.expand(cov.shape[:-1])
+            scale_mat = DiagLinearOperator(scale_fac)
+            cov = scale_mat @ cov @ scale_mat
         return cov
 
     def _check_covariance_matrix(self, cov: torch.Tensor) -> torch.Tensor:
