@@ -25,16 +25,18 @@ class TorchModel(LUMEBaseModel):
     ----------
     model : torch.nn.Module
         The underlying torch model.
-    input_variables : list of ScalarVariable
-        List defining the input variables and their order.
-    output_variables : list of ScalarVariable
+    input_variables : list of ScalarVariable or TorchNDVariable
+        List defining the input variables and their order. Supports both scalar
+        variables and multi-dimensional array variables.
+    output_variables : list of ScalarVariable or TorchNDVariable
         List defining the output variables and their order.
-    input_transformers : list of callable or modules
+    input_transformers : list of ReversibleInputTransform, torch.nn.Linear, or Callable
         Transformer objects applied to the inputs before passing to the model.
-    output_transformers : list of callable or modules
+    output_transformers : list of ReversibleInputTransform, torch.nn.Linear, or Callable
         Transformer objects applied to the outputs of the model.
     output_format : {"tensor", "variable", "raw"}
-        Determines format of outputs.
+        Determines format of outputs. "tensor" returns tensors, "variable" and
+        "raw" return scalars where possible.
     device : torch.device or str
         Device on which the model will be evaluated. Defaults to ``"cpu"``.
     fixed_model : bool
@@ -57,6 +59,11 @@ class TorchModel(LUMEBaseModel):
         Evaluate the model on random inputs.
     to(device)
         Move the model, transformers, and default values to a given device.
+
+    Notes
+    -----
+    When using TorchNDVariable inputs, all inputs must be TorchNDVariable.
+    Mixing ScalarVariable and TorchNDVariable is not currently supported.
 
     """
 
@@ -125,7 +132,27 @@ class TorchModel(LUMEBaseModel):
         return {"device": self.device, "dtype": self.dtype}
 
     @field_validator("model", mode="before")
-    def validate_torch_model(cls, v):
+    @classmethod
+    def validate_torch_model(
+        cls, v: Union[str, os.PathLike, torch.nn.Module]
+    ) -> torch.nn.Module:
+        """Validate and load the torch model from file if needed.
+
+        Parameters
+        ----------
+        v : str, os.PathLike, or torch.nn.Module
+            Model or path to model file.
+
+        Returns
+        -------
+        torch.nn.Module
+            Loaded or validated torch model.
+
+        Raises
+        ------
+        OSError
+            If the model file does not exist.
+        """
         if isinstance(v, (str, os.PathLike)):
             if os.path.exists(v):
                 fname = v
@@ -141,8 +168,27 @@ class TorchModel(LUMEBaseModel):
         return v
 
     @field_validator("input_variables")
-    def verify_input_default_value(cls, value):
-        """Verifies that input variables have the required default values."""
+    @classmethod
+    def verify_input_default_value(
+        cls, value: list[Union[ScalarVariable, TorchNDVariable]]
+    ) -> list[Union[ScalarVariable, TorchNDVariable]]:
+        """Verify that input variables have the required default values.
+
+        Parameters
+        ----------
+        value : list of ScalarVariable or TorchNDVariable
+            Input variables to validate.
+
+        Returns
+        -------
+        list of ScalarVariable or TorchNDVariable
+            Validated input variables.
+
+        Raises
+        ------
+        ValueError
+            If any input variable is missing a default value.
+        """
         for var in value:
             if var.default_value is None:
                 logger.error(
@@ -154,7 +200,27 @@ class TorchModel(LUMEBaseModel):
         return value
 
     @field_validator("input_transformers", "output_transformers", mode="before")
-    def validate_transformers(cls, v):
+    @classmethod
+    def validate_transformers(cls, v: Union[list, str, os.PathLike]) -> list:
+        """Validate and load transformers from files if needed.
+
+        Parameters
+        ----------
+        v : list, str, or os.PathLike
+            List of transformers or paths to transformer files.
+
+        Returns
+        -------
+        list
+            List of loaded transformers.
+
+        Raises
+        ------
+        ValueError
+            If transformers are not provided as a list.
+        OSError
+            If a transformer file does not exist.
+        """
         if not isinstance(v, list):
             logger.error(f"Transformers must be a list, got {type(v)}")
             raise ValueError("Transformers must be passed as list.")
@@ -172,7 +238,25 @@ class TorchModel(LUMEBaseModel):
         return v
 
     @field_validator("output_format")
-    def validate_output_format(cls, v):
+    @classmethod
+    def validate_output_format(cls, v: str) -> str:
+        """Validate the output format.
+
+        Parameters
+        ----------
+        v : str
+            Output format to validate.
+
+        Returns
+        -------
+        str
+            Validated output format.
+
+        Raises
+        ------
+        ValueError
+            If output format is not one of the supported formats.
+        """
         supported_formats = ["tensor", "variable", "raw"]
         if v not in supported_formats:
             logger.error(
@@ -184,11 +268,37 @@ class TorchModel(LUMEBaseModel):
         return v
 
     def _set_precision(self, value: torch.dtype):
-        """Sets the precision of the model."""
+        """Sets the precision of the model and transformers.
+
+        Parameters
+        ----------
+        value : torch.dtype
+            Dtype to set for the model and transformers.
+        """
         self.model.to(dtype=value)
         for t in self.input_transformers + self.output_transformers:
             if isinstance(t, torch.nn.Module):
                 t.to(dtype=value)
+
+    def _default_to_tensor(
+        self, default_value: Union[torch.Tensor, float]
+    ) -> torch.Tensor:
+        """Convert a default value to a tensor with proper dtype and device.
+
+        Parameters
+        ----------
+        default_value : torch.Tensor or float
+            Default value to convert.
+
+        Returns
+        -------
+        torch.Tensor
+            Default value as a tensor with proper dtype and device.
+        """
+        if isinstance(default_value, torch.Tensor):
+            return default_value.detach().clone().to(**self._tkwargs)
+        else:
+            return torch.tensor(default_value, **self._tkwargs)
 
     def _evaluate(
         self,
@@ -255,11 +365,12 @@ class TorchModel(LUMEBaseModel):
             Output dictionary to validate.
 
         """
-        for i, var in enumerate(self.output_variables):
-            if isinstance(var, (TorchNDVariable)):
-                # run the validation for TorchNDVariable
+        for var in self.output_variables:
+            if isinstance(var, TorchNDVariable):
+                # run the validation for TorchNDVariable (arrays/images)
                 super().output_validation({var.name: output_dict[var.name]})
             elif isinstance(var, ScalarVariable):
+                # itemize scalar tensors for element-wise validation
                 itemized_outputs = itemize_dict({var.name: output_dict[var.name]})
                 for ele in itemized_outputs:
                     super().output_validation(ele)
@@ -277,15 +388,28 @@ class TorchModel(LUMEBaseModel):
         dict of str to torch.Tensor
             Dictionary of input variable names to tensors.
 
+        Notes
+        -----
+        For ScalarVariable inputs, generates random values within the variable's
+        value_range. For TorchNDVariable inputs, repeats the default value for
+        the requested number of samples.
+
         """
         input_dict = {}
         for var in self.input_variables:
             if isinstance(var, ScalarVariable):
                 input_dict[var.name] = var.value_range[0] + torch.rand(
-                    size=(n_samples,)
+                    size=(n_samples,), **self._tkwargs
                 ) * (var.value_range[1] - var.value_range[0])
-            else:
-                var.default_value.detach().clone().repeat((n_samples, 1))
+            elif isinstance(var, TorchNDVariable):
+                # For ND variables, repeat the default value for n_samples
+                # Works for any dimensionality: 1D arrays, 2D matrices, 3D images, etc.
+                default = self._default_to_tensor(var.default_value)
+                # Add batch dim and repeat n_samples times (keeping original shape)
+                # e.g., (3, 64, 64) -> (1, 3, 64, 64) -> (n_samples, 3, 64, 64)
+                input_dict[var.name] = default.unsqueeze(0).repeat(
+                    n_samples, *([1] * default.ndim)
+                )
         return input_dict
 
     def random_evaluate(
@@ -421,18 +545,14 @@ class TorchModel(LUMEBaseModel):
                 )
             # backtrack through transformers
             for transformer in self.input_transformers[:transformer_loc][::-1]:
-                if isinstance(
-                    self.input_transformers[transformer_loc], ReversibleInputTransform
-                ):
+                if isinstance(transformer, ReversibleInputTransform):
                     x = transformer.untransform(x)
-                elif isinstance(
-                    self.input_transformers[transformer_loc], torch.nn.Linear
-                ):
+                elif isinstance(transformer, torch.nn.Linear):
                     w, b = transformer.weight, transformer.bias
                     x = torch.matmul((x - b), torch.linalg.inv(w.T))
                 else:
                     raise NotImplementedError(
-                        f"Reverse transformation for type {type(self.input_transformers[transformer_loc])} is not supported."
+                        f"Reverse transformation for type {type(transformer)} is not supported."
                     )
 
             x_new[key] = x
@@ -461,13 +581,7 @@ class TorchModel(LUMEBaseModel):
         """
         for var in self.input_variables:
             if var.name not in input_dict.keys():
-                if isinstance(var.default_value, torch.Tensor):
-                    input_dict[var.name] = var.default_value.detach().clone()
-                else:
-                    # Handle float default values for ScalarVariable
-                    input_dict[var.name] = torch.tensor(
-                        var.default_value, **self._tkwargs
-                    )
+                input_dict[var.name] = self._default_to_tensor(var.default_value)
 
         return input_dict
 
@@ -513,11 +627,7 @@ class TorchModel(LUMEBaseModel):
                 if var.name in formatted_inputs:
                     value = formatted_inputs[var.name]
                 else:
-                    value = (
-                        var.default_value.detach().clone()
-                        if isinstance(var.default_value, torch.Tensor)
-                        else torch.tensor(var.default_value, **self._tkwargs)
-                    )
+                    value = self._default_to_tensor(var.default_value)
 
                 expected_sample_shape = tuple(var.shape)
                 sample_ndim = len(expected_sample_shape)
@@ -544,16 +654,13 @@ class TorchModel(LUMEBaseModel):
                 tensor_list.append(value.to(**self._tkwargs))
 
             stacked = torch.stack(tensor_list, dim=1)  # (batch, num_arrays, ...)
-            print(f"Input tensor shape: {stacked.shape}")
+            logger.debug(f"Arranged ND inputs into tensor shape: {stacked.shape}")
             return stacked
 
         # All ScalarVariables
         default_list = []
         for var in self.input_variables:
-            if isinstance(var.default_value, torch.Tensor):
-                default_list.append(var.default_value.detach().clone())
-            else:
-                default_list.append(torch.tensor(var.default_value, **self._tkwargs))
+            default_list.append(self._default_to_tensor(var.default_value))
 
         default_tensor = torch.cat([d.flatten() for d in default_list]).to(
             **self._tkwargs
