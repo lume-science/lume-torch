@@ -13,7 +13,7 @@ from lume_torch.base import LUMEBaseModel
 logger = logging.getLogger(__name__)
 
 
-class ProbModelBaseModel(LUMEBaseModel):  # TODO: brainstorm a better name
+class ProbabilisticBaseModel(LUMEBaseModel):
     """Abstract base class for probabilistic models.
 
     This class provides a common interface for probabilistic models. Subclasses must
