@@ -13,7 +13,7 @@ try:
     from botorch.models.transforms.outcome import Standardize  # noqa: F401
     from botorch.models import MultiTaskGP, SingleTaskGP
     from lume_torch.models import TorchModel, TorchModule
-except ModuleNotFoundError:
+except (ModuleNotFoundError, ImportError):
     pass
 
 

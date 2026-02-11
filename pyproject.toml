@@ -37,7 +37,7 @@ dev = [
     "pytest"
 ]
 mlflow = [
-    "mlflow-skinny"
+    "mlflow"
 ]
 docs = [
     "mkdocs",

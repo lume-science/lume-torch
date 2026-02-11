@@ -36,10 +36,6 @@ class DistributionVariable(Variable):
 
     unit: Optional[str] = None
 
-    @property
-    def default_validation_config(self) -> ConfigEnum:
-        return "none"
-
     def validate_value(self, value: TDistribution, config: ConfigEnum = None):
         """Validates the given value.
 
