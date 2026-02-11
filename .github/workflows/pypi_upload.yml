@@ -6,7 +6,7 @@ on:
 
 jobs:
   build-n-publish:
-    if: ${{ github.repository == 'slaclab/lume-torch' }}
+    if: ${{ github.repository == 'lume-science/lume-torch' }}
     name: Build and publish Python distributions to PyPI
     runs-on: ubuntu-latest
     environment: deployment

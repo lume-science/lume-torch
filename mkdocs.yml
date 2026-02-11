@@ -1,7 +1,7 @@
 site_name: lume-torch
-site_url: https://slaclab.github.io/lume-torch
-repo_url: https://github.com/slaclab/lume-torch
-repo_name: slaclab/lume-torch
+site_url: https://lume-science.github.io/lume-torch
+repo_url: https://github.com/lume-science/lume-torch
+repo_name: lume-science/lume-torch
 
 nav:
   - Home: index.md
@@ -35,7 +35,7 @@ extra:
   generator: false
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/slaclab/lume-torch
+      link: https://github.com/lume-science/lume-torch
       name: LUME-model
 
 plugins:

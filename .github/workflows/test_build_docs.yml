@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    if: ${{ github.repository == 'slaclab/lume-torch' }}
+    if: ${{ github.repository == 'lume-science/lume-torch' }}
     runs-on: ubuntu-latest
     name:  Build docs
     steps:
