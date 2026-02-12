@@ -77,13 +77,18 @@ def serialize_variables(v: dict):
     logger.debug("Serializing variables")
     for key, value in v.items():
         if key in ["input_variables", "output_variables"] and isinstance(value, list):
+            # Call model_dump with mode='python' to ensure proper serialization
+            serialized_vars = [
+                var.model_dump(mode="python") if hasattr(var, "model_dump") else var
+                for var in value
+            ]
             v[key] = {
                 var_dict["name"]: {
                     var_k: var_v
                     for var_k, var_v in var_dict.items()
                     if not (var_k == "name" or var_v is None)
                 }
-                for var_dict in value
+                for var_dict in serialized_vars
             }
     return v
 

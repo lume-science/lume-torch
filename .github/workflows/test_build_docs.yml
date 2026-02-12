@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    if: ${{ github.repository == 'slaclab/lume-torch' }}
+    if: ${{ github.repository == 'lume-science/lume-torch' }}
     runs-on: ubuntu-latest
     name:  Build docs
     steps:
@@ -26,6 +26,3 @@ jobs:
 
       - name: Build docs
         run: uv run mkdocs build
-
-      - name: Minimize uv cache
-        run: uv cache prune --ci

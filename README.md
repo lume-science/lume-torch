@@ -1,14 +1,22 @@
 # LUME-Torch
 
-LUME-torch holds data structures used in the LUME modeling toolset. Variables and models built using LUME-torch will be compatible with other tools. LUME-torch uses [pydantic](https://pydantic-docs.helpmanual.io/) models to enforce typed attributes upon instantiation.
+> **⚠️ Note:** This package was previously known as `lume-model`. It has been renamed to `lume-torch`. Documentation pages are currently being updated to reflect this change. Some references to `lume-model` may still appear in older documentation.
 
-## Requirements
+LUME-Torch is a LUME compatible wrapper for Torch based surrogate models. It provides a consistent API for defining
+surrogate models, variables, and configuration files, as well as utilities for loading and saving models.
+
+The TorchModel class allows users to easily wrap their trained PyTorch models for use in LUME applications,
+while the TorchModule class provides a PyTorch-compatible interface for seamless integration with other
+PyTorch-based tools and workflows.
+
+## Base Requirements
 
 * Python >= 3.10
 * pydantic
 * numpy
 * pyyaml
-* mlflow
+* botorch >= 0.15
+* lume-base
 
 ## Install
 
@@ -16,26 +24,13 @@ LUME-torch can be installed with conda using the command:
 
 ``` $ conda install lume-torch -c conda-forge ```
 
-or through pip (coming soon):
+or through pip:
 
 ``` $ pip install lume-torch ```
 
 ## Developer
 
-A development environment may be created using the packaged `dev-environment.yml` file.
-
-```
-conda env create -f dev-environment.yml
-```
-
-Install as editable:
-
-```
-conda activate lume-torch-dev
-pip install --no-dependencies -e .
-```
-
-Or by creating a fresh environment and installing the package:
+Create a development environment and install the package in editable mode:
 
 ```
 pip install -e ".[dev]"
@@ -49,7 +44,11 @@ pre-commit install
 
 ## Variables
 
-The lume-torch variables are intended to enforce requirements for input and output variables by variable type. For now, only scalar variables (floats) are supported.
+The lume-torch variables are intended to enforce requirements for input and output variables by variable type.
+
+### ScalarVariable
+
+LUME-torch uses `ScalarVariable` from the [lume-base](https://github.com/slaclab/lume-base) package for scalar floating-point values. Additionally, lume-torch provides a `DistributionVariable` class for PyTorch distributions.
 
 Minimal example of scalar input and output variables:
 
@@ -64,14 +63,13 @@ input_variable = ScalarVariable(
 output_variable = ScalarVariable(name="example_output")
 ```
 
-All input variables may be made into constants by passing the
-`is_constant=True` keyword argument. These constant variables are always
-set to their default value and any other value assignments on
-them will raise an error message.
+All input variables may be made read-only by passing the
+`read_only=True` keyword argument. These read-only variables are validated
+to ensure their values match their default value during model execution.
 
 ## Models
 
-The lume-torch base class `lume_torch.base.LUMEBaseModel` is intended to guide user development while allowing for flexibility and customizability. It is used to enforce LUME tool compatible classes for the execution of trained models.
+The lume-torch base class `lume_torch.base.LUMETorch` is intended to guide user development while allowing for flexibility and customizability. It is used to enforce LUME tool compatible classes for the execution of trained models.
 
 Requirements for model classes:
 
@@ -83,11 +81,11 @@ Requirements for model classes:
 Example model implementation and instantiation:
 
 ```python
-from lume_torch.base import LUMEBaseModel
+from lume_torch.base import LUMETorch
 from lume_torch.variables import ScalarVariable
 
 
-class ExampleModel(LUMEBaseModel):
+class ExampleModel(LUMETorch):
     def _evaluate(self, input_dict):
         output_dict = {
             "output1": input_dict[self.input_variables[0].name] ** 2,
@@ -97,8 +95,8 @@ class ExampleModel(LUMEBaseModel):
 
 
 input_variables = [
-    ScalarVariable(name="input1", default=0.1, value_range=[0.0, 1.0]),
-    ScalarVariable(name="input2", default=0.2, value_range=[0.0, 1.0]),
+    ScalarVariable(name="input1", default_value=0.1, value_range=[0.0, 1.0]),
+    ScalarVariable(name="input2", default_value=0.2, value_range=[0.0, 1.0]),
 ]
 output_variables = [
     ScalarVariable(name="output1"),
@@ -126,12 +124,12 @@ input_variables:
   input1:
     variable_class: ScalarVariable
     default_value: 0.1
-    is_constant: false
+    read_only: false
     value_range: [0.0, 1.0]
   input2:
     variable_class: ScalarVariable
     default_value: 0.2
-    is_constant: false
+    read_only: false
     value_range: [0.0, 1.0]
 output_variables:
   output1: {variable_class: ScalarVariable}
@@ -141,10 +139,10 @@ output_variables:
 and can be loaded by simply passing the file to the model constructor:
 
 ```python
-from lume_torch.base import LUMEBaseModel
+from lume_torch.base import LUMETorch
 
 
-class ExampleModel(LUMEBaseModel):
+class ExampleModel(LUMETorch):
     def _evaluate(self, input_dict):
         output_dict = {
             "output1": input_dict[self.input_variables[0].name] ** 2,
@@ -156,7 +154,7 @@ class ExampleModel(LUMEBaseModel):
 m = ExampleModel("example_model.yml")
 ```
 
-## PyTorch Toolkit
+## TorchModel Usage
 
 A TorchModel can also be loaded from a YAML, specifying `TorchModel` in
 the `model_class` of the configuration file.
@@ -172,14 +170,6 @@ fixed_model: true
 In addition to the model_class, we also specify the path to the
 TorchModel's model and transformers (saved using `torch.save()`).
 
-The `output_format` specification indicates which form the outputs
-of the model's `evaluate()` function should take, which may vary
-depending on the application. TorchModel instances working with the
-[LUME-EPICS](https://github.com/slaclab/lume-epics) service will
-require an `OutputVariable` type, while [Xopt](https://github.
-com/xopt-org/Xopt) requires either a dictionary of float
-values or tensors as output.
-
 The variables and any transformers can also be added to the YAML
 configuration file:
 
@@ -190,17 +180,17 @@ input_variables:
     variable_class: ScalarVariable
     default_value: 0.1
     value_range: [0.0, 1.0]
-    is_constant: false
+    read_only: false
   input2:
     variable_class: ScalarVariable
     default_value: 0.2
     value_range: [0.0, 1.0]
-    is_constant: false
+    read_only: false
 output_variables:
   output:
     variable_class: ScalarVariable
     value_range: [-.inf, .inf]
-    is_constant: false
+    read_only: false
 input_validation_config: null
 output_validation_config: null
 model: model.pt
@@ -257,12 +247,12 @@ model:
       variable_class: ScalarVariable
       default_value: 0.1
       value_range: [0.0, 1.0]
-      is_constant: false
+      read_only: false
     input2:
       variable_class: ScalarVariable
       default_value: 0.2
       value_range: [0.0, 1.0]
-      is_constant: false
+      read_only: false
   output_variables:
     output:
       variable_class: ScalarVariable

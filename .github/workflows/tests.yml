@@ -11,7 +11,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     name: Python ${{ matrix.python-version }}, ${{ matrix.os }} build
     steps:
@@ -39,9 +39,6 @@ jobs:
           echo -e '## Test results\n\n```' >> "$GITHUB_STEP_SUMMARY"
           uv run pytest -ra --pyargs tests -v 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Minimize uv cache
-        run: uv cache prune --ci
 
   test-pypi-build:
     runs-on: ubuntu-latest

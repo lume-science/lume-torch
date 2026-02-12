@@ -37,7 +37,7 @@ dev = [
     "pytest"
 ]
 mlflow = [
-    "mlflow-skinny"
+    "mlflow"
 ]
 docs = [
     "mkdocs",
@@ -48,9 +48,9 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/slaclab/lume-torch"
-Documentation = "https://slaclab.github.io/lume-torch/"
-"Bug Tracker" = "https://github.com/slaclab/lume-torch/issues"
+Homepage = "https://github.com/lume-science/lume-torch"
+Documentation = "https://lume-science.github.io/lume-torch/"
+"Bug Tracker" = "https://github.com/lume-science/lume-torch/issues"
 
 [project.license]
 file = "LICENSE"

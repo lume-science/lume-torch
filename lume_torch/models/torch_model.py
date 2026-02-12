@@ -7,15 +7,14 @@ import torch
 from pydantic import field_validator
 from botorch.models.transforms.input import ReversibleInputTransform
 
-from lume_torch.base import LUMEBaseModel
+from lume_torch.base import LUMETorch
 from lume_torch.variables import ScalarVariable, TorchNDVariable
-from lume_torch.models.utils import itemize_dict, format_inputs
 
 
 logger = logging.getLogger(__name__)
 
 
-class TorchModel(LUMEBaseModel):
+class TorchModel(LUMETorch):
     """LUME-model class for torch models.
 
     By default, the models are assumed to be fixed, so all gradient computation

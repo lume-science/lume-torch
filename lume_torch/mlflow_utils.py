@@ -80,7 +80,7 @@ def register_model(
     if not HAS_MLFLOW:
         logger.error("MLflow is not installed - cannot register model")
         raise ImportError(
-            "MLflow is not installed. Please install mlflow-skinny to use this feature: "
+            "MLflow is not installed. Please install mlflow to use this feature: "
             "pip install 'lume-torch[mlflow]'"
         )
     if "MLFLOW_TRACKING_URI" not in os.environ:
@@ -200,7 +200,7 @@ def create_mlflow_model(model) -> Any:
     """Creates an MLflow model from the given model."""
     if not HAS_MLFLOW:
         raise ImportError(
-            "MLflow is not installed. Please install mlflow-skinny to use this feature: "
+            "MLflow is not installed. Please install mlflow to use this feature: "
             "pip install 'lume-torch[mlflow]'"
         )
     return PyFuncModel(model=model)

@@ -8,12 +8,12 @@ from torch.distributions import Distribution as TDistribution
 
 from lume_torch.variables import DistributionVariable
 from lume_torch.models.utils import format_inputs, itemize_dict
-from lume_torch.base import LUMEBaseModel
+from lume_torch.base import LUMETorch
 
 logger = logging.getLogger(__name__)
 
 
-class ProbabilisticBaseModel(LUMEBaseModel):
+class ProbabilisticBaseModel(LUMETorch):
     """Abstract base class for probabilistic models.
 
     This class provides a common interface for probabilistic models. Subclasses must

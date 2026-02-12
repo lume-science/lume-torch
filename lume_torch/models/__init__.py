@@ -3,6 +3,7 @@ import yaml
 from typing import Union
 
 registered_models = []
+__all__ = ["get_model", "model_from_yaml", "registered_models"]
 
 # models requiring torch
 try:
@@ -12,7 +13,8 @@ try:
     from lume_torch.models.gp_model import GPModel
 
     registered_models += [TorchModel, TorchModule, NNEnsemble, GPModel]
-except ModuleNotFoundError:
+    __all__ += ["TorchModel", "TorchModule", "NNEnsemble", "GPModel"]
+except (ModuleNotFoundError, ImportError):
     pass
 
 
@@ -54,7 +56,7 @@ def model_from_yaml(yaml_str: Union[str, os.PathLike]):
 
     Returns
     -------
-    LUMEBaseModel
+    LUMETorch
         Instantiated LUME model defined by the YAML configuration.
 
     """
