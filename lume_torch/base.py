@@ -11,7 +11,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from lume_torch.variables import (
-    ScalarVariable,
+    TorchScalarVariable,
     get_variable,
     ConfigEnum,
     DistributionVariable,
@@ -352,9 +352,9 @@ class LUMETorch(BaseModel, ABC):
 
     Attributes
     ----------
-    input_variables : list of ScalarVariable
+    input_variables : list of TorchScalarVariable
         List defining the input variables and their order.
-    output_variables : list of ScalarVariable
+    output_variables : list of TorchScalarVariable
         List defining the output variables and their order.
     input_validation_config : dict of str to ConfigEnum, optional
         Determines the behavior during input validation by specifying the validation
@@ -389,8 +389,10 @@ class LUMETorch(BaseModel, ABC):
 
     """
 
-    input_variables: list[Union[ScalarVariable, TorchNDVariable]]
-    output_variables: list[Union[ScalarVariable, TorchNDVariable, DistributionVariable]]
+    input_variables: list[Union[TorchScalarVariable, TorchNDVariable]]
+    output_variables: list[
+        Union[TorchScalarVariable, TorchNDVariable, DistributionVariable]
+    ]
     input_validation_config: Optional[dict[str, ConfigEnum]] = None
     output_validation_config: Optional[dict[str, ConfigEnum]] = None
 
@@ -407,7 +409,7 @@ class LUMETorch(BaseModel, ABC):
 
         Returns
         -------
-        list of ScalarVariable
+        list of TorchScalarVariable
             List of validated variable instances.
 
         Raises
@@ -425,7 +427,7 @@ class LUMETorch(BaseModel, ABC):
                 elif isinstance(
                     val,
                     (
-                        ScalarVariable,
+                        TorchScalarVariable,
                         TorchNDVariable,
                         DistributionVariable,
                     ),

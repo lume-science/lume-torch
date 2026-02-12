@@ -8,7 +8,8 @@ from pydantic import field_validator
 from botorch.models.transforms.input import ReversibleInputTransform
 
 from lume_torch.base import LUMETorch
-from lume_torch.variables import ScalarVariable, TorchNDVariable
+from lume_torch.variables import TorchScalarVariable, TorchNDVariable
+from lume_torch.models.utils import itemize_dict, format_inputs
 
 
 logger = logging.getLogger(__name__)
@@ -24,10 +25,10 @@ class TorchModel(LUMETorch):
     ----------
     model : torch.nn.Module
         The underlying torch model.
-    input_variables : list of ScalarVariable or TorchNDVariable
+    input_variables : list of TorchScalarVariable or TorchNDVariable
         List defining the input variables and their order. Supports both scalar
         variables and multi-dimensional array variables.
-    output_variables : list of ScalarVariable or TorchNDVariable
+    output_variables : list of TorchScalarVariable or TorchNDVariable
         List defining the output variables and their order.
     input_transformers : list of ReversibleInputTransform, torch.nn.Linear, or Callable
         Transformer objects applied to the inputs before passing to the model.
@@ -62,7 +63,7 @@ class TorchModel(LUMETorch):
     Notes
     -----
     When using TorchNDVariable inputs, all inputs must be TorchNDVariable.
-    Mixing ScalarVariable and TorchNDVariable is not currently supported.
+    Mixing TorchScalarVariable and TorchNDVariable is not currently supported.
 
     """
 
@@ -169,18 +170,18 @@ class TorchModel(LUMETorch):
     @field_validator("input_variables")
     @classmethod
     def verify_input_default_value(
-        cls, value: list[Union[ScalarVariable, TorchNDVariable]]
-    ) -> list[Union[ScalarVariable, TorchNDVariable]]:
+        cls, value: list[Union[TorchScalarVariable, TorchNDVariable]]
+    ) -> list[Union[TorchScalarVariable, TorchNDVariable]]:
         """Verify that input variables have the required default values.
 
         Parameters
         ----------
-        value : list of ScalarVariable or TorchNDVariable
+        value : list of TorchScalarVariable or TorchNDVariable
             Input variables to validate.
 
         Returns
         -------
-        list of ScalarVariable or TorchNDVariable
+        list of TorchScalarVariable or TorchNDVariable
             Validated input variables.
 
         Raises
@@ -368,7 +369,7 @@ class TorchModel(LUMETorch):
             if isinstance(var, TorchNDVariable):
                 # run the validation for TorchNDVariable (arrays/images)
                 super().output_validation({var.name: output_dict[var.name]})
-            elif isinstance(var, ScalarVariable):
+            elif isinstance(var, TorchScalarVariable):
                 # itemize scalar tensors for element-wise validation
                 itemized_outputs = itemize_dict({var.name: output_dict[var.name]})
                 for ele in itemized_outputs:
@@ -389,14 +390,14 @@ class TorchModel(LUMETorch):
 
         Notes
         -----
-        For ScalarVariable inputs, generates random values within the variable's
+        For TorchScalarVariable inputs, generates random values within the variable's
         value_range. For TorchNDVariable inputs, repeats the default value for
         the requested number of samples.
 
         """
         input_dict = {}
         for var in self.input_variables:
-            if isinstance(var, ScalarVariable):
+            if isinstance(var, TorchScalarVariable):
                 input_dict[var.name] = var.value_range[0] + torch.rand(
                     size=(n_samples,), **self._tkwargs
                 ) * (var.value_range[1] - var.value_range[0])
@@ -486,7 +487,7 @@ class TorchModel(LUMETorch):
 
     def update_input_variables_to_transformer(
         self, transformer_loc: int
-    ) -> list[ScalarVariable]:
+    ) -> list[TorchScalarVariable]:
         """Return input variables updated to the transformer at the given location.
 
         Updated are the value ranges and defaults of the input variables. This
@@ -500,7 +501,7 @@ class TorchModel(LUMETorch):
 
         Returns
         -------
-        list of ScalarVariable
+        list of TorchScalarVariable
             The updated input variables.
 
         """
@@ -590,7 +591,7 @@ class TorchModel(LUMETorch):
         """Enforces ordering, batching, and default filling of inputs.
 
         * If all inputs are `TorchNDVariable`, stacks them into shape `(batch, num_arrays, *array_shape)`.
-        * If all inputs are `ScalarVariable`, concatenates them so the last dimension matches the number of inputs,
+        * If all inputs are `TorchScalarVariable`, concatenates them so the last dimension matches the number of inputs,
          broadcasting defaults as needed.
         * If a mix of array and scalar inputs is provided, raises `NotImplementedError`.
         * Missing inputs are filled with their default values before arranging.
@@ -610,12 +611,12 @@ class TorchModel(LUMETorch):
             isinstance(v, TorchNDVariable) for v in self.input_variables
         )
         contains_scalar = any(
-            isinstance(v, ScalarVariable) for v in self.input_variables
+            isinstance(v, TorchScalarVariable) for v in self.input_variables
         )
 
         if contains_array and contains_scalar:
             raise NotImplementedError(
-                "Mixing ScalarVariable and TorchNDVariable inputs is not supported."
+                "Mixing TorchScalarVariable and TorchNDVariable inputs is not supported."
             )
 
         # All TorchNDVariable
@@ -656,7 +657,7 @@ class TorchModel(LUMETorch):
             logger.debug(f"Arranged ND inputs into tensor shape: {stacked.shape}")
             return stacked
 
-        # All ScalarVariables
+        # All TorchScalarVariables
         default_list = []
         for var in self.input_variables:
             default_list.append(self._default_to_tensor(var.default_value))

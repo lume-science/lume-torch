@@ -5,6 +5,7 @@ but they can be used to validate encountered values.
 """
 
 import logging
+import warnings
 from typing import Any, Optional, Tuple, Type, Union
 
 import torch
@@ -20,9 +21,13 @@ logger = logging.getLogger(__name__)
 _BaseScalarVariable = ScalarVariable
 
 # Re-export base classes for backward compatibility and clean API
+# We alias TorchScalarVariable (defined below) as ScalarVariable for backwards compatibility
+# with a deprecation warning. See end of this module for the aliasing.
+# NOTE: ScalarVariable will be deprecated in the next release - use TorchScalarVariable instead.
 __all__ = [
     "Variable",
-    "ScalarVariable",  # This will be TorchScalarVariable for backwards compatibility
+    "ScalarVariable",
+    "TorchScalarVariable",
     "NDVariable",
     "TorchNDVariable",
     "ConfigEnum",
@@ -381,7 +386,23 @@ class TorchNDVariable(NDVariable):
 
 
 # Alias TorchScalarVariable as ScalarVariable for backwards compatibility
-ScalarVariable = TorchScalarVariable
+# This will be deprecated in the next release
+class ScalarVariable(TorchScalarVariable):
+    """Deprecated alias for TorchScalarVariable.
+
+    .. deprecated::
+        ScalarVariable is deprecated and will be removed in the next release.
+        Use TorchScalarVariable instead.
+    """
+
+    def __init__(self, *args, **kwargs):
+        warnings.warn(
+            "ScalarVariable is deprecated and will be removed in the next release. "
+            "Please use TorchScalarVariable instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(*args, **kwargs)
 
 
 def get_variable(name: str) -> Type[Variable]:
@@ -398,10 +419,13 @@ def get_variable(name: str) -> Type[Variable]:
         Variable subclass with the given name.
 
     """
-    classes = [ScalarVariable, DistributionVariable, TorchNDVariable]
+    classes = [
+        TorchScalarVariable,
+        ScalarVariable,
+        DistributionVariable,
+        TorchNDVariable,
+    ]
     class_lookup = {c.__name__: c for c in classes}
-    # Also allow "ScalarVariable" to map to TorchScalarVariable
-    class_lookup["ScalarVariable"] = ScalarVariable
     if name not in class_lookup.keys():
         logger.error(
             f"Unknown variable type '{name}', valid names are {list(class_lookup.keys())}"

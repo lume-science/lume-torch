@@ -4,7 +4,7 @@ import pytest
 
 try:
     import torch
-    from lume_torch.variables import ScalarVariable
+    from lume_torch.variables import TorchScalarVariable
     from lume_torch.models.torch_module import (
         TorchModel,
         TorchModule,
@@ -29,11 +29,11 @@ def synthetic_lume_torch():
             return 0.5 * x**2 + y**2
 
     input_variables = [
-        ScalarVariable(name="x", default_value=0.0, value_range=[-3.0, 3.0]),
-        ScalarVariable(name="y", default_value=1.0, value_range=[0.5, 1.5]),
+        TorchScalarVariable(name="x", default_value=0.0, value_range=[-3.0, 3.0]),
+        TorchScalarVariable(name="y", default_value=1.0, value_range=[0.5, 1.5]),
     ]
 
-    output_variables = [ScalarVariable(name="f")]
+    output_variables = [TorchScalarVariable(name="f")]
 
     torch_model = TorchModel(
         model=PriorTorchModel(),

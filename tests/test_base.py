@@ -3,7 +3,7 @@ import pytest
 import yaml
 
 from lume_torch.base import LUMETorch
-from lume_torch.variables import ScalarVariable
+from lume_torch.variables import TorchScalarVariable
 
 
 class ExampleModel(LUMETorch):
@@ -61,7 +61,7 @@ class TestBaseModel:
         yaml_output = example_model.yaml()
         dict_output = yaml.safe_load(yaml_output)
         dict_output["input_variables"]["input1"]["variable_class"] = (
-            ScalarVariable.__name__
+            TorchScalarVariable.__name__
         )
 
         # test loading from yaml

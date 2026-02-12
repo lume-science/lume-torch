@@ -12,7 +12,7 @@ try:
         ReversibleInputTransform,
     )
     from lume_torch.models import TorchModel
-    from lume_torch.variables import ScalarVariable
+    from lume_torch.variables import TorchScalarVariable
 
     torch.manual_seed(42)
 except ImportError:
@@ -42,7 +42,9 @@ class TestTorchModel:
         self,
         california_model_info: dict[str, str],
         california_model_kwargs: dict[str, Union[list, dict, str]],
-        california_variables: tuple[list[ScalarVariable], list[ScalarVariable]],
+        california_variables: tuple[
+            list[TorchScalarVariable], list[TorchScalarVariable]
+        ],
         california_transformers: tuple[list, list],
         california_model,
     ):

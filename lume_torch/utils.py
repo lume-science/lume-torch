@@ -5,7 +5,7 @@ import logging
 import importlib
 from typing import Union, get_origin, get_args
 
-from lume_torch.variables import ScalarVariable, get_variable
+from lume_torch.variables import TorchScalarVariable, get_variable
 
 logger = logging.getLogger(__name__)
 
@@ -37,14 +37,14 @@ def try_import_module(name: str):
     return module
 
 
-def verify_unique_variable_names(variables: list[ScalarVariable]):
+def verify_unique_variable_names(variables: list[TorchScalarVariable]):
     """Verifies that variable names are unique.
 
     Raises a ValueError if any reoccurring variable names are found.
 
     Parameters
     ----------
-    variables : list of ScalarVariable
+    variables : list of TorchScalarVariable
         List of scalar variables.
 
     Raises
@@ -117,17 +117,17 @@ def deserialize_variables(v):
 
 
 def variables_as_yaml(
-    input_variables: list[ScalarVariable],
-    output_variables: list[ScalarVariable],
+    input_variables: list[TorchScalarVariable],
+    output_variables: list[TorchScalarVariable],
     file: Union[str, os.PathLike] = None,
 ) -> str:
     """Returns and optionally saves YAML formatted string defining the in- and output variables.
 
     Parameters
     ----------
-    input_variables : list of ScalarVariable
+    input_variables : list of TorchScalarVariable
         List of input variables.
-    output_variables : list of ScalarVariable
+    output_variables : list of TorchScalarVariable
         List of output variables.
     file : str or os.PathLike, optional
         If not None, YAML formatted string is saved to given file path.
@@ -157,7 +157,7 @@ def variables_as_yaml(
 
 def variables_from_dict(
     config: dict,
-) -> tuple[list[ScalarVariable], list[ScalarVariable]]:
+) -> tuple[list[TorchScalarVariable], list[TorchScalarVariable]]:
     """Parses given config and returns in- and output variable lists.
 
     Parameters
@@ -167,7 +167,7 @@ def variables_from_dict(
 
     Returns
     -------
-    tuple of (list of ScalarVariable, list of ScalarVariable)
+    tuple of (list of TorchScalarVariable, list of TorchScalarVariable)
         In- and output variable lists.
 
     """
@@ -191,7 +191,7 @@ def variables_from_dict(
 
 def variables_from_yaml(
     yaml_obj: Union[str, os.PathLike],
-) -> tuple[list[ScalarVariable], list[ScalarVariable]]:
+) -> tuple[list[TorchScalarVariable], list[TorchScalarVariable]]:
     """Parses YAML object and returns in- and output variable lists.
 
     Parameters
@@ -201,7 +201,7 @@ def variables_from_yaml(
 
     Returns
     -------
-    tuple of (list of ScalarVariable, list of ScalarVariable)
+    tuple of (list of TorchScalarVariable, list of TorchScalarVariable)
         In- and output variable lists.
 
     """

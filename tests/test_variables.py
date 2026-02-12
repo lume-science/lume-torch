@@ -46,16 +46,24 @@ class TestGetVariable:
 
     def test_get_variable_creates_instance(self):
         """Test that get_variable returns a class that can be instantiated."""
-        var = get_variable(ScalarVariable.__name__)(name="test")
+        # Using ScalarVariable will trigger a deprecation warning
+        with pytest.warns(DeprecationWarning, match="ScalarVariable is deprecated"):
+            var = get_variable(ScalarVariable.__name__)(name="test")
         assert isinstance(var, ScalarVariable)
 
 
 class TestScalarVariableAlias:
-    """Tests to ensure ScalarVariable is aliased to TorchScalarVariable."""
+    """Tests to ensure ScalarVariable is a deprecated subclass of TorchScalarVariable."""
 
     def test_scalar_variable_is_torch_scalar_variable(self):
-        """ScalarVariable should be TorchScalarVariable."""
-        assert ScalarVariable is TorchScalarVariable
+        """ScalarVariable should be a deprecated subclass of TorchScalarVariable."""
+        # ScalarVariable is now a subclass, not an alias
+        assert issubclass(ScalarVariable, TorchScalarVariable)
+        # Verify it issues a deprecation warning when instantiated
+        with pytest.warns(DeprecationWarning, match="ScalarVariable is deprecated"):
+            var = ScalarVariable(name="test_var", default_value=1.0)
+        # Verify it still works as expected
+        assert isinstance(var, TorchScalarVariable)
 
 
 class TestTorchScalarVariable:
