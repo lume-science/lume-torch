@@ -125,7 +125,7 @@ def recursive_serialize(
     logger.debug(
         f"Serializing object with base_key: '{base_key}', {len(v)} top-level keys"
     )
-    # try to import modules for LUMEBaseModel child classes
+    # try to import modules for LUMETorch child classes
     torch = try_import_module("torch")
     # serialize
     v = serialize_variables(v)
@@ -333,7 +333,7 @@ def model_kwargs_from_dict(config: dict) -> dict:
     return config
 
 
-class LUMEBaseModel(BaseModel, ABC):
+class LUMETorch(BaseModel, ABC):
     """Abstract base class for models using lume-torch variables.
 
     Inheriting classes must define the _evaluate method and variable names must be unique.
@@ -420,7 +420,7 @@ class LUMEBaseModel(BaseModel, ABC):
         return new_value
 
     def __init__(self, *args, **kwargs):
-        """Initializes LUMEBaseModel.
+        """Initializes LUMETorch.
 
         Parameters
         ----------
@@ -441,14 +441,14 @@ class LUMEBaseModel(BaseModel, ABC):
             if len(kwargs) > 0:
                 logger.error("Cannot specify both YAML config and keyword arguments")
                 raise ValueError(
-                    "Cannot specify YAML string and keyword arguments for LUMEBaseModel init."
+                    "Cannot specify YAML string and keyword arguments for LUMETorch init."
                 )
             logger.debug("Initializing model from configuration")
             super().__init__(**parse_config(args[0], type(self).model_fields))
         elif len(args) > 1:
             logger.error(f"Too many positional arguments: {len(args)}")
             raise ValueError(
-                "Arguments to LUMEBaseModel must be either a single YAML string "
+                "Arguments to LUMETorch must be either a single YAML string "
                 "or keyword arguments passed directly to pydantic."
             )
         else:
@@ -681,7 +681,7 @@ class LUMEBaseModel(BaseModel, ABC):
 
         Returns
         -------
-        LUMEBaseModel
+        LUMETorch
             Instance of the model loaded from the file.
 
         Raises
@@ -706,7 +706,7 @@ class LUMEBaseModel(BaseModel, ABC):
 
         Returns
         -------
-        LUMEBaseModel
+        LUMETorch
             Instance of the model loaded from the YAML configuration.
 
         """

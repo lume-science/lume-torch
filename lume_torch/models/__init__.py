@@ -56,7 +56,7 @@ def model_from_yaml(yaml_str: Union[str, os.PathLike]):
 
     Returns
     -------
-    LUMEBaseModel
+    LUMETorch
         Instantiated LUME model defined by the YAML configuration.
 
     """

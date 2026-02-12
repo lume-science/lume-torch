@@ -69,7 +69,7 @@ to ensure their values match their default value during model execution.
 
 ## Models
 
-The lume-torch base class `lume_torch.base.LUMEBaseModel` is intended to guide user development while allowing for flexibility and customizability. It is used to enforce LUME tool compatible classes for the execution of trained models.
+The lume-torch base class `lume_torch.base.LUMETorch` is intended to guide user development while allowing for flexibility and customizability. It is used to enforce LUME tool compatible classes for the execution of trained models.
 
 Requirements for model classes:
 
@@ -81,11 +81,11 @@ Requirements for model classes:
 Example model implementation and instantiation:
 
 ```python
-from lume_torch.base import LUMEBaseModel
+from lume_torch.base import LUMETorch
 from lume_torch.variables import ScalarVariable
 
 
-class ExampleModel(LUMEBaseModel):
+class ExampleModel(LUMETorch):
     def _evaluate(self, input_dict):
         output_dict = {
             "output1": input_dict[self.input_variables[0].name] ** 2,
@@ -139,10 +139,10 @@ output_variables:
 and can be loaded by simply passing the file to the model constructor:
 
 ```python
-from lume_torch.base import LUMEBaseModel
+from lume_torch.base import LUMETorch
 
 
-class ExampleModel(LUMEBaseModel):
+class ExampleModel(LUMETorch):
     def _evaluate(self, input_dict):
         output_dict = {
             "output1": input_dict[self.input_variables[0].name] ** 2,

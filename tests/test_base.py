@@ -2,11 +2,11 @@ import os
 import pytest
 import yaml
 
-from lume_torch.base import LUMEBaseModel
+from lume_torch.base import LUMETorch
 from lume_torch.variables import ScalarVariable
 
 
-class ExampleModel(LUMEBaseModel):
+class ExampleModel(LUMETorch):
     def _evaluate(self, input_dict):
         pass
 
@@ -15,10 +15,10 @@ class TestBaseModel:
     def test_init(self, simple_variables):
         # init with no variable specification
         with pytest.raises(TypeError):
-            _ = LUMEBaseModel()
+            _ = LUMETorch()
 
         # init child class with no _evaluate function
-        class NoEvaluateModel(LUMEBaseModel):
+        class NoEvaluateModel(LUMETorch):
             def predict(self, input_dict):
                 pass
 

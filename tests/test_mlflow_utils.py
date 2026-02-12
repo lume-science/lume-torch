@@ -7,10 +7,10 @@ import tempfile
 from unittest import mock
 
 from lume_torch.variables import ScalarVariable
-from lume_torch.base import LUMEBaseModel
+from lume_torch.base import LUMETorch
 
 
-class SimpleModel(LUMEBaseModel):
+class SimpleModel(LUMETorch):
     """Simple test model for testing."""
 
     def _evaluate(self, input_dict, **kwargs):
