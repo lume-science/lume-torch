@@ -21,6 +21,9 @@ from lume_torch.utils import (
 )
 from lume_torch.mlflow_utils import register_model
 
+from lume.model import LUMEModel
+from lume.variables import Variable
+
 logger = logging.getLogger(__name__)
 
 JSON_ENCODERS = {
@@ -772,3 +775,128 @@ class LUMETorch(BaseModel, ABC):
             save_jit,
             **kwargs,
         )
+
+
+class LUMETorchModel(LUMEModel):
+    """
+    This class Subclasses LUMEModel to create a wrapper around a LUMETorch model.
+
+    Parameters
+    ----------
+    torch_model: LUMETorch
+        An instance of a LUMETorch model to wrap.
+    """
+
+    def __init__(
+        self, torch_model: LUMETorch, initial_inputs: Optional[dict[str, Any]] = None
+    ):
+        """
+         Initialize the LUMETorchModel.
+
+        Parameters
+        ----------
+        torch_model : LUMETorch
+            The LUMETorch model to wrap.
+        initial_inputs : dict[str, Any], optional
+            Initial input values. If None, uses default values from variables.
+        """
+        self.torch_model = torch_model
+
+        # Initialize state
+        self._state = {}
+
+        # Set initial values
+        if initial_inputs is None:
+            initial_inputs = self._get_default_inputs()
+
+        if initial_inputs:
+            self.set(initial_inputs)
+
+        # Store initialstate for reset
+        self._initial_state = self._state.copy()
+
+    def _get_default_inputs(self) -> dict[str, Any]:
+        """Get default inputs from torch model's input variables"""
+        default_inputs = {}
+        for var in self.torch_model.input_variables:
+            if hasattr(var, "default") and var.default is not None:
+                default_inputs[var.name] = var.default
+            elif hasattr(var, "default_value") and var.default_value is not None:
+                default_inputs[var.name] = var.default_value
+        return default_inputs
+
+    def _get(self, names: list[str]) -> dict[str, Any]:
+        """
+        Internal method to retrieve current values for specified variables.
+
+        Parameters
+        ----------
+        names : list[str]
+            List of variable names to retrieve.
+
+        Returns
+        -------
+        dict[str, Any]
+            Dictionary mapping variable names to their current values.
+        """
+        return {name: self._state[name] for name in names}
+
+    def _set(self, values: dict[str, Any]) -> None:
+        """
+        Internal method to set input variables and run the torch model.
+
+        Parameters
+        ----------
+        values : dict[str, Any]
+            Dictionary of variable names and values to set.
+        """
+        # Update input values in state
+        self._state.update(values)
+
+        # Prepare inputs for torch model evaluation
+        input_dict = {name: self._state[name] for name in self.torch_model.input_names}
+
+        # Evaluate the torch model
+        output_dict = self.torch_model.evaluate(input_dict)
+
+        # Update state with outputs
+        self._state.update(output_dict)
+
+    def evaluate(self, input_dict: dict[str, Any], **kwargs) -> dict[str, Any]:
+        """
+        Evaluate the torch model directly without updating state.
+
+        Parameters
+        ----------
+        input_dict : dict[str, Any]
+            Dictionary of input variable names to values.
+        **kwargs
+            Additional keyword arguments passed to the torch model's evaluate.
+
+        Returns
+        -------
+        dict[str, Any]
+            Dictionary of output variable names to values.
+        """
+        return self.torch_model.evaluate(input_dict, **kwargs)
+
+    def reset(self) -> None:
+        """Reset the model to its initial state."""
+        self._state = self._initial_state.copy()
+
+    @property
+    def supported_variables(self) -> dict[str, Variable]:
+        """Dictionary of all supported variables."""
+        variables = {}
+
+        # Add input variables
+        for var in self.torch_model.input_variables:
+            variables[var.name] = var
+
+        # Add output variables (marked as read-only)
+        for var in self.torch_model.output_variables:
+            if hasattr(var, "read_only"):
+                var.read_only = True
+            variables[var.name] = var
+
+        return variables
