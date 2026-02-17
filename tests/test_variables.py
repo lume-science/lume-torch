@@ -129,24 +129,24 @@ class TestTorchScalarVariable:
             )
 
     # Dtype validation tests
-    def test_dtype_string_conversion_float32(self):
-        """Test dtype string conversion to torch dtype."""
-        var = TorchScalarVariable(name="test", dtype="float32")
+    def test_dtype_float32(self):
+        """Test dtype with torch.float32."""
+        var = TorchScalarVariable(name="test", dtype=torch.float32)
         assert var.dtype == torch.float32
 
-    def test_dtype_string_conversion_float64(self):
-        """Test dtype string conversion for float64."""
-        var = TorchScalarVariable(name="test", dtype="float64")
+    def test_dtype_float64(self):
+        """Test dtype with torch.float64."""
+        var = TorchScalarVariable(name="test", dtype=torch.float64)
         assert var.dtype == torch.float64
 
-    def test_dtype_string_conversion_double(self):
-        """Test dtype string conversion for double."""
-        var = TorchScalarVariable(name="test", dtype="double")
+    def test_dtype_double(self):
+        """Test dtype with torch.double."""
+        var = TorchScalarVariable(name="test", dtype=torch.double)
         assert var.dtype == torch.double
 
-    def test_dtype_invalid_string_raises(self):
-        """Test that invalid dtype string raises ValueError."""
-        with pytest.raises(ValueError, match="Unknown or unsupported dtype string"):
+    def test_dtype_invalid_type_raises(self):
+        """Test that invalid dtype type raises TypeError."""
+        with pytest.raises(TypeError, match="dtype must be a"):
             TorchScalarVariable(name="test", dtype="invalid_dtype")
 
     def test_dtype_non_floating_raises(self):
@@ -173,7 +173,7 @@ class TestTorchScalarVariable:
     def test_validate_value_tensor_1d(self):
         """Test validation of 1D tensor."""
         var = TorchScalarVariable(name="test")
-        var.validate_value(torch.tensor([5.0, 6.0, 7.0]))  # Should not raise
+        var.validate_value(torch.tensor([[5.0], [6.0], [7.0]]))  # Should not raise
 
     def test_validate_value_tensor_batched(self):
         """Test validation of batched tensor with last dim = 1."""
@@ -183,7 +183,7 @@ class TestTorchScalarVariable:
     def test_validate_value_tensor_invalid_shape_raises(self):
         """Test that tensor with invalid shape raises ValueError."""
         var = TorchScalarVariable(name="test")
-        with pytest.raises(ValueError, match="Expected tensor with 0 or 1 dimensions"):
+        with pytest.raises(ValueError, match="Expected tensor with 0 dimensions,"):
             var.validate_value(torch.tensor([[5.0, 6.0], [7.0, 8.0]]))
 
     def test_validate_value_invalid_type_raises(self):
@@ -196,7 +196,7 @@ class TestTorchScalarVariable:
         """Test that non-float tensor raises ValueError."""
         var = TorchScalarVariable(name="test")
         with pytest.raises(ValueError, match="floating-point type"):
-            var.validate_value(torch.tensor([1, 2, 3]))  # int64 tensor
+            var.validate_value(torch.tensor([[1], [2], [3]]))  # int64 tensor
 
     def test_validate_value_wrong_dtype_raises(self):
         """Test that tensor with wrong dtype raises ValueError."""
@@ -287,13 +287,11 @@ class TestTorchScalarVariable:
         """Test read-only validation with batched tensor."""
         var = TorchScalarVariable(name="test", default_value=5.0, read_only=True)
         # All values in batch equal to default
-        var.validate_value(torch.tensor([5.0, 5.0, 5.0]))  # Should not raise
+        var.validate_value(torch.tensor([[5.0], [5.0], [5.0]]))  # Should not raise
 
     def test_read_only_batched_tensor_mismatch_raises(self):
         """Test read-only validation with batched tensor containing mismatched values."""
         var = TorchScalarVariable(name="test", default_value=5.0, read_only=True)
-        with pytest.raises(ValueError, match="read-only"):
-            var.validate_value(torch.tensor([5.0, 6.0, 5.0]))
         with pytest.raises(ValueError, match="read-only"):
             var.validate_value(torch.tensor([[5.0], [6.0], [5.0]]))
 
@@ -388,40 +386,20 @@ class TestTorchNDVariable:
         var = TorchNDVariable(name="test_nd", shape=(10, 20), default_value=default)
         assert torch.allclose(var.default_value, default)
 
-    def test_creation_with_dtype_string(self):
-        """Test dtype string conversion."""
-        var = TorchNDVariable(name="test", shape=(10,), dtype="float64")
+    def test_creation_with_dtype(self):
+        """Test dtype with torch dtype object."""
+        var = TorchNDVariable(name="test", shape=(10,), dtype=torch.float64)
         assert var.dtype == torch.float64
 
     def test_creation_with_int_dtype(self):
         """Test int dtype is accepted."""
-        var = TorchNDVariable(name="test", shape=(10,), dtype="int32")
+        var = TorchNDVariable(name="test", shape=(10,), dtype=torch.int32)
         assert var.dtype == torch.int32
 
-    def test_invalid_dtype_string_raises(self):
-        """Test invalid dtype string raises ValueError."""
-        with pytest.raises(ValueError, match="Unknown dtype string"):
+    def test_invalid_dtype_type_raises(self):
+        """Test invalid dtype type raises TypeError."""
+        with pytest.raises(TypeError, match="dtype must be a"):
             TorchNDVariable(name="test", shape=(10,), dtype="invalid")
-
-    # Image variable tests
-    def test_image_variable(self):
-        """Test image variable creation."""
-        var = TorchNDVariable(name="image", shape=(3, 64, 64), num_channels=3)
-        assert var.is_image is True
-        assert var.num_channels == 3
-
-    def test_non_image_variable(self):
-        """Test non-image variable."""
-        var = TorchNDVariable(name="array", shape=(10, 20))
-        assert var.is_image is False
-        assert var.num_channels is None
-
-    def test_image_invalid_shape_raises(self):
-        """Test image with invalid shape raises ValueError."""
-        with pytest.raises(
-            ValueError, match="Image array expects shape to be 2D or 3D"
-        ):
-            TorchNDVariable(name="image", shape=(3, 4, 64, 64), num_channels=3)
 
     # Value validation tests
     def test_validate_value_correct_tensor(self):
@@ -437,7 +415,7 @@ class TestTorchNDVariable:
     def test_validate_value_wrong_type_raises(self):
         """Test that non-tensor value raises TypeError."""
         var = TorchNDVariable(name="test", shape=(10, 20))
-        with pytest.raises(TypeError, match="Expected value to be a torch.Tensor"):
+        with pytest.raises(TypeError, match="Expected value to be a Tensor"):
             var.validate_value([[1, 2], [3, 4]])
 
     def test_validate_value_wrong_shape_raises(self):
@@ -455,56 +433,8 @@ class TestTorchNDVariable:
     def test_validate_value_insufficient_dims_raises(self):
         """Test that insufficient dimensions raise ValueError."""
         var = TorchNDVariable(name="test", shape=(10, 20, 30))
-        with pytest.raises(ValueError, match="Expected at least"):
-            var.validate_value(torch.randn(20, 30))
-
-    # Image validation tests
-    def test_validate_image_grayscale(self):
-        """Test validation of grayscale image."""
-        var = TorchNDVariable(name="image", shape=(64, 64), num_channels=1)
-        var.validate_value(torch.randn(64, 64))  # Should not raise
-
-    def test_validate_image_rgb(self):
-        """Test validation of RGB image."""
-        var = TorchNDVariable(name="image", shape=(3, 64, 64), num_channels=3)
-        var.validate_value(torch.randn(3, 64, 64))  # Should not raise
-
-    def test_validate_image_batched(self):
-        """Test validation of batched image."""
-        var = TorchNDVariable(name="image", shape=(3, 64, 64), num_channels=3)
-        var.validate_value(torch.randn(16, 3, 64, 64))  # Batch of 16
-
-    def test_validate_image_wrong_channels_raises(self):
-        """Test that wrong channel count raises ValueError."""
-        var = TorchNDVariable(name="image", shape=(3, 64, 64), num_channels=3)
         with pytest.raises(ValueError, match="Expected last 3 dimension"):
-            var.validate_value(torch.randn(1, 64, 64))
-
-    def test_read_only_image_matching_value(self):
-        """Test read-only image variable with matching value."""
-        default = torch.randn(3, 64, 64)
-        var = TorchNDVariable(
-            name="image",
-            shape=(3, 64, 64),
-            num_channels=3,
-            default_value=default,
-            read_only=True,
-        )
-        var.validate_value(default.clone())  # Should not raise
-
-    def test_read_only_image_batched(self):
-        """Test read-only image variable with batched input matching default."""
-        default = torch.randn(3, 64, 64)
-        var = TorchNDVariable(
-            name="image",
-            shape=(3, 64, 64),
-            num_channels=3,
-            default_value=default,
-            read_only=True,
-        )
-        # Batched images all matching default
-        batched = default.unsqueeze(0).repeat(4, 1, 1, 1)  # (4, 3, 64, 64)
-        var.validate_value(batched)  # Should not raise
+            var.validate_value(torch.randn(20, 30))
 
     # Read-only validation tests
     def test_read_only_matching_value(self):
@@ -644,22 +574,6 @@ class TestVariableInheritance:
 class TestTorchNDVariableEdgeCases:
     """Additional edge case tests for TorchNDVariable."""
 
-    def test_all_dtype_string_conversions(self):
-        """Test all supported dtype string conversions."""
-        dtype_tests = [
-            ("float16", torch.float16),
-            ("float32", torch.float32),
-            ("float64", torch.float64),
-            ("int8", torch.int8),
-            ("int16", torch.int16),
-            ("int32", torch.int32),
-            ("int64", torch.int64),
-            ("bool", torch.bool),
-        ]
-        for dtype_str, expected_dtype in dtype_tests:
-            var = TorchNDVariable(name="test", shape=(10,), dtype=dtype_str)
-            assert var.dtype == expected_dtype, f"Failed for {dtype_str}"
-
     def test_1d_shape(self):
         """Test 1D shape variable."""
         var = TorchNDVariable(name="test", shape=(100,))
@@ -675,12 +589,6 @@ class TestTorchNDVariableEdgeCases:
         var = TorchNDVariable(name="test", shape=(10, 20))
         # Shape (2, 3, 10, 20) means batch_size_1=2, batch_size_2=3
         var.validate_value(torch.randn(2, 3, 10, 20))  # Should not raise
-
-    def test_grayscale_image_2d_shape(self):
-        """Test grayscale image with 2D shape."""
-        var = TorchNDVariable(name="image", shape=(64, 64), num_channels=1)
-        assert var.is_image is True
-        var.validate_value(torch.randn(64, 64))
 
     def test_model_dump_nd_variable(self):
         """Test model_dump for TorchNDVariable."""

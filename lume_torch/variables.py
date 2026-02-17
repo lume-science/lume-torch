@@ -6,7 +6,7 @@ but they can be used to validate encountered values.
 
 import logging
 import warnings
-from typing import Any, Optional, Tuple, Type, Union
+from typing import Optional, Type, Union
 
 import torch
 from torch import Tensor
@@ -112,26 +112,17 @@ class TorchScalarVariable(_BaseScalarVariable):
     @field_validator("dtype", mode="before")
     @classmethod
     def validate_dtype(cls, value):
-        """Convert dtype string to torch dtype if needed and validate it's a float type."""
+        """Validate that dtype is a torch.dtype and is a floating-point type."""
         if value is None:
             return None
 
-        if isinstance(value, str):
-            dtype_map = {
-                "float16": torch.float16,
-                "float32": torch.float32,
-                "float64": torch.float64,
-                "half": torch.half,
-                "float": torch.float,
-                "double": torch.double,
-            }
-            if value in dtype_map:
-                value = dtype_map[value]
-            else:
-                raise ValueError(
-                    f"Unknown or unsupported dtype string: {value}. "
-                    f"Supported dtypes are: {list(dtype_map.keys())}"
-                )
+        # Validate that value is a torch.dtype instance
+        if not isinstance(value, torch.dtype):
+            raise TypeError(
+                f"dtype must be a torch.dtype instance, "
+                f"got {type(value).__name__}. "
+                f"Received value: {repr(value)}"
+            )
 
         # Validate that the dtype is a floating-point type
         if not value.is_floating_point:
@@ -194,15 +185,11 @@ class TorchScalarVariable(_BaseScalarVariable):
     def _validate_value_type(self, value):
         """Validates that value is a torch.Tensor (0D, 1D or batched 1D) or a regular float/int."""
         if isinstance(value, Tensor):
-            if value.ndim == 0:
-                pass  # scalar tensor, valid
-            elif value.ndim == 1:
-                pass  # 1D tensor (single scalar or batch of scalars), valid
-            elif value.ndim > 1 and value.shape[-1] == 1:
-                pass  # Batched scalars with shape (batch_size, 1, ...), valid
+            if value.ndim == 0 or value.shape[-1] == 1:
+                pass  # Batched scalars with shape (batch_size, 1), valid
             else:
                 raise ValueError(
-                    f"Expected tensor with 0 or 1 dimensions, or multi-dimensional tensor "
+                    f"Expected tensor with 0 dimensions, or multi-dimensional tensor "
                     f"with last dimension equal to 1 for batched scalar values, "
                     f"but got {value.ndim} dimensions with shape {value.shape}."
                 )
@@ -265,56 +252,21 @@ class TorchNDVariable(NDVariable):
     Attributes
     ----------
     default_value : Tensor | None
-        Default value for the variable.
+        Default value for the variable. Must match the expected
+        shape and dtype if provided. Defaults to None.
     dtype : torch.dtype
         Data type of the tensor. Defaults to torch.float32.
-
-    Notes
-    -----
-    For image data (when num_channels is set), PyTorch uses (C, H, W) convention
-    where C is the number of channels, H is height, and W is width.
 
     """
 
     default_value: Optional[Tensor] = None
     dtype: torch.dtype = torch.float32
-
-    @field_validator("dtype", mode="before")
-    @classmethod
-    def validate_dtype(cls, value):
-        """Convert dtype string to torch dtype if needed."""
-        if isinstance(value, str):
-            dtype_map = {
-                "float16": torch.float16,
-                "float32": torch.float32,
-                "float64": torch.float64,
-                "int8": torch.int8,
-                "int16": torch.int16,
-                "int32": torch.int32,
-                "int64": torch.int64,
-                "bool": torch.bool,
-            }
-            if value in dtype_map:
-                return dtype_map[value]
-            raise ValueError(f"Unknown dtype string: {value}")
-        return value
-
-    def _validate_array_type(self, value: Any) -> None:
-        """Validates that value is a torch.Tensor."""
-        if not isinstance(value, Tensor):
-            raise TypeError(
-                f"Expected value to be a torch.Tensor, but received {type(value)}."
-            )
-
-    def _validate_dtype(self, value: Tensor, expected_dtype: torch.dtype) -> None:
-        """Validates the dtype of the tensor."""
-        if expected_dtype and value.dtype != expected_dtype:
-            raise ValueError(f"Expected dtype {expected_dtype}, got {value.dtype}")
+    array_type: type = torch.Tensor
 
     def _validate_read_only(self, value: Tensor) -> None:
-        """Validates that read-only ND variables match their default value.
+        """Validates that read-only ND-variables match their default value.
 
-        Uses element-wise comparison for arrays/images.
+        Uses element-wise comparison for tensors.
         Handles batched tensors by comparing each batch element to the default.
         """
         if not self.read_only:
@@ -331,8 +283,7 @@ class TorchNDVariable(NDVariable):
         # Check if value is batched
         if value.ndim > expected_ndim:
             # Batched input - compare each batch item to default
-            # Reshape value to (batch_size, -1) and default to (-1)
-            _ = value.shape[:-expected_ndim] if expected_ndim > 0 else value.shape[:-1]
+            # Flatten all leading batch dimensions into single dimension
             value_flat = value.reshape(-1, *self.shape)
 
             # Check all batch items against default
@@ -352,36 +303,8 @@ class TorchNDVariable(NDVariable):
                     f"but received different array values."
                 )
 
-    def _get_image_shape_for_validation(self, value: Tensor) -> Tuple[int, ...]:
-        """Returns image shape for PyTorch (C, H, W) format."""
-        expected_ndim = len(self.shape)
-        image_shape = value.shape[-expected_ndim:]
-
-        # Validate channel count for PyTorch (C, H, W)
-        if len(image_shape) == 2 and self.num_channels != 1:
-            raise ValueError(
-                f"Expected 1 channel for grayscale image, got {self.num_channels}."
-            )
-        elif len(image_shape) == 3 and image_shape[0] != self.num_channels:
-            raise ValueError(
-                f"Expected {self.num_channels} channels, got {image_shape[0]}."
-            )
-
-        return image_shape
-
-    @model_validator(mode="after")
-    def validate_default_value(self):
-        if self.default_value is not None:
-            self._validate_array_type(self.default_value)
-            self._validate_shape(self.default_value, expected_shape=self.shape)
-            self._validate_dtype(self.default_value, self.dtype)
-            if self.is_image:
-                self._validate_image_shape(self.default_value)
-        return self
-
     def validate_value(self, value: Tensor, config: str = None):
         super().validate_value(value, config)
-        self._validate_dtype(value, self.dtype)
         self._validate_read_only(value)
 
 

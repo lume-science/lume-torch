@@ -111,7 +111,7 @@ class TorchModule(torch.nn.Module):
             return self._output_order
 
     def forward(self, x: torch.Tensor):
-        # input shape: [n_batch, n_samples, n_dim]
+        # input shape: [..., n_features] or [..., n_features, 1] for scalar variables
         x = self._validate_input(x)
         model_input = self._tensor_to_dictionary(x)
         y_model = self.evaluate_model(model_input)
@@ -243,15 +243,32 @@ class TorchModule(torch.nn.Module):
 
     def _tensor_to_dictionary(self, x: torch.Tensor):
         input_dict = {}
-        for idx, input_name in enumerate(self.input_order):
-            input_dict[input_name] = x[..., idx].unsqueeze(-1)
+        # Handle both old format (..., n_features) and new format (..., n_features, 1)
+        if x.shape[-1] == 1:
+            # New scalar format: (..., n_features, 1)
+            # Index the second-to-last dimension and keep trailing 1
+            for idx, input_name in enumerate(self.input_order):
+                input_dict[input_name] = x[..., idx, :]
+        else:
+            # Old format: (..., n_features)
+            # Index last dimension and add trailing 1
+            for idx, input_name in enumerate(self.input_order):
+                input_dict[input_name] = x[..., idx].unsqueeze(-1)
         return input_dict
 
     def _dictionary_to_tensor(self, y_model: dict[str, torch.Tensor]):
-        output_tensor = torch.stack(
-            [y_model[output_name].unsqueeze(-1) for output_name in self.output_order],
-            dim=-1,
-        )
+        # Model outputs have shape (batch, 1) for single-sample or (batch, samples) for multi-sample
+        # We need to stack them into (..., n_outputs) format
+        output_list = []
+        for output_name in self.output_order:
+            output = y_model[output_name]
+            # If output has trailing 1 (single-sample), squeeze it for stacking
+            # Multi-sample outputs like (batch, samples) are kept as-is
+            if output.shape[-1] == 1:
+                output = output.squeeze(-1)
+            output_list.append(output)
+
+        output_tensor = torch.stack(output_list, dim=-1)
         return output_tensor
 
     @staticmethod
