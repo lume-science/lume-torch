@@ -6,7 +6,7 @@ but they can be used to validate encountered values.
 
 import logging
 import warnings
-from typing import Optional, Type, Union
+from typing import Optional, Type, Union, ClassVar
 
 import torch
 from torch import Tensor
@@ -257,11 +257,26 @@ class TorchNDVariable(NDVariable):
     dtype : torch.dtype
         Data type of the tensor. Defaults to torch.float32.
 
+    Examples
+    --------
+    >>> import torch
+    >>> from lume_torch.variables import TorchNDVariable
+    >>>
+    >>> var = TorchNDVariable(
+    ...     name="my_tensor",
+    ...     shape=(3, 4),
+    ...     dtype=torch.float32,
+    ...     unit="m"
+    ... )
+    >>>
+    >>> tensor = torch.rand(3, 4)
+    >>> var.validate_value(tensor, config="error")  # Passes
+
     """
 
     default_value: Optional[Tensor] = None
     dtype: torch.dtype = torch.float32
-    array_type: type = torch.Tensor
+    array_type: ClassVar[type] = Tensor
 
     def _validate_read_only(self, value: Tensor) -> None:
         """Validates that read-only ND-variables match their default value.
