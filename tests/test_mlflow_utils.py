@@ -6,7 +6,7 @@ import pytest
 import tempfile
 from unittest import mock
 
-from lume_torch.variables import ScalarVariable
+from lume_torch.variables import TorchScalarVariable
 from lume_torch.base import LUMETorch
 
 
@@ -21,10 +21,10 @@ class SimpleModel(LUMETorch):
 def simple_model():
     """Create a simple test model."""
     input_variables = [
-        ScalarVariable(name="input", default_value=1.0, value_range=(0.0, 10.0))
+        TorchScalarVariable(name="input", default_value=1.0, value_range=(0.0, 10.0))
     ]
     output_variables = [
-        ScalarVariable(name="output", default_value=2.0, value_range=(0.0, 20.0))
+        TorchScalarVariable(name="output", default_value=2.0, value_range=(0.0, 20.0))
     ]
     return SimpleModel(
         input_variables=input_variables, output_variables=output_variables

@@ -1,41 +1,41 @@
 model_class: TorchModel
 input_variables:
   MedInc:
-    variable_class: ScalarVariable
+    variable_class: TorchScalarVariable
     value_range: [0.4999000132083893, 15.000100135803223]
     default_value: 3.7857346534729004
   HouseAge:
-    variable_class: ScalarVariable
+    variable_class: TorchScalarVariable
     value_range: [1.0, 52.0]
     default_value: 29.282135009765625
   AveRooms:
-    variable_class: ScalarVariable
+    variable_class: TorchScalarVariable
     value_range: [0.8461538553237915, 141.90908813476562]
     default_value: 5.4074907302856445
   AveBedrms:
-    variable_class: ScalarVariable
+    variable_class: TorchScalarVariable
     value_range: [0.375, 34.06666564941406]
     default_value: 1.1071722507476807
   Population:
-    variable_class: ScalarVariable
+    variable_class: TorchScalarVariable
     value_range: [3.0, 28566.0]
     default_value: 1437.0687255859375
   AveOccup:
-    variable_class: ScalarVariable
+    variable_class: TorchScalarVariable
     value_range: [0.692307710647583, 599.7142944335938]
     default_value: 3.035413980484009
   Latitude:
-    variable_class: ScalarVariable
+    variable_class: TorchScalarVariable
     value_range: [32.65999984741211, 41.95000076293945]
     default_value: 35.28323745727539
   Longitude:
-    variable_class: ScalarVariable
+    variable_class: TorchScalarVariable
     value_range: [-124.3499984741211, -114.30999755859375]
     default_value: -119.11573028564453
 input_validation_config:
   MedInc: "error"
 output_variables:
-  MedHouseVal: {variable_class: ScalarVariable}
+  MedHouseVal: {variable_class: TorchScalarVariable}
 model: model.pt
 input_transformers: [input_transformers_0.pt]
 output_transformers: [output_transformers_0.pt]

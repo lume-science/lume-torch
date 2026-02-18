@@ -7,13 +7,13 @@ import torch
 from torch.distributions import Distribution as TDistribution
 
 from lume_torch.variables import DistributionVariable
-from lume_torch.models.utils import InputDictModel, format_inputs, itemize_dict
+from lume_torch.models.utils import format_inputs, itemize_dict
 from lume_torch.base import LUMETorch
 
 logger = logging.getLogger(__name__)
 
 
-class ProbModelBaseModel(LUMETorch):  # TODO: brainstorm a better name
+class ProbabilisticBaseModel(LUMETorch):
     """Abstract base class for probabilistic models.
 
     This class provides a common interface for probabilistic models. Subclasses must
@@ -36,10 +36,10 @@ class ProbModelBaseModel(LUMETorch):  # TODO: brainstorm a better name
 
     Methods
     -------
+    _evaluate(input_dict, **kwargs)
+        Evaluates the model by calling :meth:`_get_predictions`.
     _get_predictions(input_dict, **kwargs)
         Abstract method that returns a dictionary of output distributions.
-    _evaluate(input_dict, **kwargs)
-        Evaluates the model and returns a dictionary of output distributions.
     input_validation(input_dict)
         Validates and normalizes the input dictionary prior to evaluation.
     output_validation(output_dict)
@@ -69,13 +69,9 @@ class ProbModelBaseModel(LUMETorch):  # TODO: brainstorm a better name
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # No range validation for probabilistic models currently implemented
-        # self.input_validation_config = {x: "none" for x in self.input_names}
 
     @property
-    def dtype(
-        self,
-    ):
+    def dtype(self):
         """Returns the data type for the model."""
         if self.precision == "double":
             return torch.double
@@ -86,6 +82,10 @@ class ProbModelBaseModel(LUMETorch):  # TODO: brainstorm a better name
                 f"Unknown precision {self.precision}, "
                 f"expected one of ['double', 'single']."
             )
+
+    @property
+    def _tkwargs(self) -> dict:
+        return {"device": self.device, "dtype": self.dtype}
 
     def _arrange_inputs(
         self, d: dict[str, Union[float, torch.Tensor]]
@@ -149,6 +149,30 @@ class ProbModelBaseModel(LUMETorch):  # TODO: brainstorm a better name
                 "All values must be either floats or tensors, and all tensors must have the same length."
             )
 
+    def _evaluate(
+        self, input_dict: dict[str, Union[float, torch.Tensor]], **kwargs
+    ) -> dict[str, TDistribution]:
+        """Evaluate the probabilistic model.
+
+        This method bridges the base class evaluation contract with the probabilistic
+        model's prediction interface by calling :meth:`_get_predictions`.
+
+        Parameters
+        ----------
+        input_dict : dict of str to float or torch.Tensor
+            Dictionary of input variable names to values. Values can be floats or
+            tensors of shape ``n`` or ``b × n`` (batch mode).
+        **kwargs
+            Additional keyword arguments forwarded to :meth:`_get_predictions`.
+
+        Returns
+        -------
+        dict of str to torch.distributions.Distribution
+            Dictionary mapping output variable names to predictive distributions.
+
+        """
+        return self._get_predictions(input_dict, **kwargs)
+
     @abstractmethod
     def _get_predictions(
         self, input_dict: dict[str, float | torch.Tensor], **kwargs
@@ -172,31 +196,6 @@ class ProbModelBaseModel(LUMETorch):  # TODO: brainstorm a better name
         """
         pass
 
-    def _evaluate(
-        self, input_dict: dict[str, Union[float, torch.Tensor]], **kwargs
-    ) -> dict[str, TDistribution]:
-        """Evaluate the probabilistic model.
-
-        Parameters
-        ----------
-        input_dict : dict of str to float or torch.Tensor
-            Dictionary of input variable names to values. Values can be floats or
-            tensors of shape ``n`` or ``b × n`` (batch mode).
-        **kwargs
-            Additional keyword arguments forwarded to :meth:`_get_predictions`.
-
-        Returns
-        -------
-        dict of str to torch.distributions.Distribution
-            Dictionary mapping output variable names to predictive distributions.
-
-        """
-        # Evaluate and get mean and variance for each output
-        output_dict = self._get_predictions(input_dict, **kwargs)
-        # Split multi-dimensional output into separate distributions and
-        # return output dictionary
-        return output_dict
-
     def input_validation(self, input_dict: dict[str, Union[float, torch.Tensor]]):
         """Validates input dictionary before evaluation.
 
@@ -211,28 +210,18 @@ class ProbModelBaseModel(LUMETorch):  # TODO: brainstorm a better name
             Validated input dictionary.
 
         """
-        # validate input type (ints only are cast to floats for scalars)
-        validated_input = InputDictModel(input_dict=input_dict).input_dict
+        # validate original inputs (catches dtype mismatches)
+        super().input_validation(input_dict)
+
         # format inputs as tensors w/o changing the dtype
-        formatted_inputs = format_inputs(validated_input)
-        # itemize inputs for validation
-        itemized_inputs = itemize_dict(formatted_inputs)
+        formatted_inputs = format_inputs(input_dict.copy())
 
-        for ele in itemized_inputs:
-            # validate values that were in the torch tensor
-            # any ints in the torch tensor will be cast to floats by Pydantic
-            # but others will be caught, e.g. booleans
-            ele = InputDictModel(input_dict=ele).input_dict
-            # validate each value based on its var class and config
-            super().input_validation(ele)
+        # cast tensors to expected dtype and device
+        formatted_inputs = {
+            k: v.to(**self._tkwargs).squeeze(-1) for k, v in formatted_inputs.items()
+        }
 
-        # return the validated input dict for consistency w/ casting ints to floats
-        if any([isinstance(value, torch.Tensor) for value in validated_input.values()]):
-            validated_input = {
-                k: v.to(**self._tkwargs).squeeze(-1) for k, v in validated_input.items()
-            }
-
-        return validated_input
+        return formatted_inputs
 
     def output_validation(self, output_dict: dict[str, TDistribution]):
         """Itemizes tensors before performing output validation.
@@ -307,7 +296,7 @@ class TorchDistributionWrapper(TDistribution):
         result, attr_name = self._get_attr(attribute_names)
 
         if attr_name in ["cov", "covariance", "covariance_matrix"]:
-            return torch.diagonal(torch.tensor(result))
+            return torch.diagonal(result)
 
         return result
 
@@ -318,7 +307,7 @@ class TorchDistributionWrapper(TDistribution):
         result, _ = self._get_attr(attribute_names)
         return result
 
-    def confidence_region(self) -> Tuple[torch.tensor, torch.tensor]:
+    def confidence_region(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """Return a 2-sigma confidence region around the mean.
 
         Adapted from :mod:`gpytorch.distributions.multivariate_normal`.
@@ -363,7 +352,7 @@ class TorchDistributionWrapper(TDistribution):
         return result
 
     # TODO: check fn signature
-    def rsample(self, sample_shape: torch.Size()) -> torch.Tensor:
+    def rsample(self, sample_shape: torch.Size = torch.Size()) -> torch.Tensor:
         """Generate reparameterized samples from the custom distribution.
 
         Parameters
@@ -382,7 +371,7 @@ class TorchDistributionWrapper(TDistribution):
         result, _ = self._get_attr(attribute_names, sample_shape)
         return result
 
-    def sample(self, sample_shape: torch.Size()) -> torch.Tensor:
+    def sample(self, sample_shape: torch.Size = torch.Size()) -> torch.Tensor:
         """Generate samples from the custom distribution (non-differentiable if using sample).
 
         Parameters
@@ -398,8 +387,8 @@ class TorchDistributionWrapper(TDistribution):
         """
         attribute_names = ["sample", "rvs"]
         # Assume non-torch.Distribution takes an integer sample_shape
-        sample_shape = sample_shape.numel()
-        result, _ = self._get_attr(attribute_names, sample_shape)
+        num_samples = sample_shape.numel()
+        result, _ = self._get_attr(attribute_names, num_samples)
         return result
 
     def __repr__(self):

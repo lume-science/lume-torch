@@ -5,7 +5,7 @@ from typing import Any, Union
 import pytest
 
 from lume_torch.utils import variables_from_yaml
-from lume_torch.variables import ScalarVariable, DistributionVariable
+from lume_torch.variables import TorchScalarVariable, DistributionVariable
 
 try:
     import torch
@@ -24,12 +24,17 @@ def rootdir() -> str:
 
 # TorchModel fixtures
 @pytest.fixture(scope="session")
-def simple_variables() -> dict[str, Union[list[ScalarVariable], list[ScalarVariable]]]:
+def simple_variables() -> dict[
+    str, Union[list[TorchScalarVariable], list[TorchScalarVariable]]
+]:
     input_variables = [
-        ScalarVariable(name="input1", default_value=1.0, value_range=(0.0, 5.0)),
-        ScalarVariable(name="input2", default_value=2.0, value_range=(1.0, 3.0)),
+        TorchScalarVariable(name="input1", default_value=1.0, value_range=(0.0, 5.0)),
+        TorchScalarVariable(name="input2", default_value=2.0, value_range=(1.0, 3.0)),
     ]
-    output_variables = [ScalarVariable(name="output1"), ScalarVariable(name="output2")]
+    output_variables = [
+        TorchScalarVariable(name="output1"),
+        TorchScalarVariable(name="output2"),
+    ]
     return {"input_variables": input_variables, "output_variables": output_variables}
 
 
@@ -46,7 +51,9 @@ def california_model_info(rootdir) -> dict[str, str]:
 
 
 @pytest.fixture(scope="module")
-def california_variables(rootdir) -> tuple[list[ScalarVariable], list[ScalarVariable]]:
+def california_variables(
+    rootdir,
+) -> tuple[list[TorchScalarVariable], list[TorchScalarVariable]]:
     try:
         file = f"{rootdir}/test_files/california_regression/variables.yml"
         input_variables, output_variables = variables_from_yaml(file)
@@ -112,7 +119,8 @@ def california_test_input_tensor(rootdir: str):
         test_input_tensor = torch.load(
             f"{rootdir}/test_files/california_regression/test_input_tensor.pt",
             weights_only=False,
-        )
+        ).unsqueeze(-1)
+        print(f"Loaded test input tensor with shape {test_input_tensor.shape}")
     except FileNotFoundError as e:
         pytest.skip(str(e))
     return test_input_tensor
@@ -125,9 +133,11 @@ def california_test_input_dict(
     pytest.importorskip("botorch")
 
     test_input_dict = {
-        key: california_test_input_tensor[0, idx]
+        key: california_test_input_tensor[:, idx]
         for idx, key in enumerate(california_model_info["model_in_list"])
     }
+    for key, tensor in test_input_dict.items():
+        print(f"Test input for {key} has shape {tensor.shape}")
     return test_input_dict
 
 
@@ -148,9 +158,9 @@ def california_module(california_model):
 # GPModel fixtures
 @pytest.fixture(scope="session")
 def gp_variables() -> dict[
-    str, Union[list[ScalarVariable], list[DistributionVariable]]
+    str, Union[list[TorchScalarVariable], list[DistributionVariable]]
 ]:
-    input_variables = [ScalarVariable(name="input")]
+    input_variables = [TorchScalarVariable(name="input")]
     output_variables = [
         DistributionVariable(name="output1"),
         DistributionVariable(name="output2"),

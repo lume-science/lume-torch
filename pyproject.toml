@@ -25,7 +25,7 @@ dependencies = [
     "numpy",
     "pyyaml",
     "botorch>=0.15",
-    "lume-base @ git+https://github.com/roussel-ryan/lume-base@main"
+    "lume-base @ git+https://github.com/pluflou/lume-base@add-ndvariable"
 ]
 dynamic = ["version"]
 [tool.setuptools_scm]

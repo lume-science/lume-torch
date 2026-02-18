@@ -1,7 +1,7 @@
 model_class: GPModel
 input_variables:
   input1:
-    variable_class: ScalarVariable
+    variable_class: TorchScalarVariable
     is_constant: false
     value_range: [-.inf, .inf]
     value_range_tolerance: 1.0e-08

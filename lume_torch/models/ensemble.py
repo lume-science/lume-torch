@@ -10,13 +10,13 @@ import torch
 from torch.distributions import Normal
 from torch.distributions.distribution import Distribution as TDistribution
 
-from lume_torch.models.prob_model_base import ProbModelBaseModel
+from lume_torch.models.prob_model_base import ProbabilisticBaseModel
 from lume_torch.models.torch_model import TorchModel
 
 logger = logging.getLogger(__name__)
 
 
-class NNEnsemble(ProbModelBaseModel):
+class NNEnsemble(ProbabilisticBaseModel):
     """LUME-model class for neural network ensembles.
 
     This class allows for the evaluation of multiple neural network models as an
@@ -43,9 +43,9 @@ class NNEnsemble(ProbModelBaseModel):
         Parameters
         ----------
         *args
-            Positional arguments forwarded to :class:`ProbModelBaseModel`.
+            Positional arguments forwarded to :class:`ProbabilisticBaseModel`.
         **kwargs
-            Keyword arguments forwarded to :class:`ProbModelBaseModel`.
+            Keyword arguments forwarded to :class:`ProbabilisticBaseModel`.
 
         Notes
         -----
@@ -111,7 +111,7 @@ class NNEnsemble(ProbModelBaseModel):
     ) -> dict[str, TDistribution]:
         """Get the predictions of the ensemble of models.
 
-        This implements the abstract method from :class:`ProbModelBaseModel` by
+        This implements the abstract method from :class:`ProbabilisticBaseModel` by
         evaluating each model in the ensemble and aggregating their outputs.
 
         Parameters
