@@ -23,7 +23,7 @@ from lume_torch.mlflow_utils import register_model
 
 from lume.model import LUMEModel
 from lume.variables import Variable
-from lume_torch import models as torch_models
+import importlib
 
 logger = logging.getLogger(__name__)
 
@@ -1037,6 +1037,7 @@ class LUMETorchModel(LUMEModel):
         # Get the model class name
         model_class_name = torch_model_config.get("model_class")
 
+        torch_models = importlib.import_module("lume_torch.models")
         torch_model_class = getattr(torch_models, model_class_name)
 
         # Load the torch model using its from_yaml method
