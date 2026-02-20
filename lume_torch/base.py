@@ -23,6 +23,7 @@ from lume_torch.mlflow_utils import register_model
 
 from lume.model import LUMEModel
 from lume.variables import Variable
+import importlib
 
 logger = logging.getLogger(__name__)
 
@@ -801,6 +802,7 @@ class LUMETorchModel(LUMEModel):
             Initial input values. If None, uses default values from variables.
         """
         self.torch_model = torch_model
+        self._initial_inputs = initial_inputs
 
         # Initialize state
         self._state = {}
@@ -881,3 +883,213 @@ class LUMETorchModel(LUMEModel):
             variables[var.name] = var
 
         return variables
+
+    def dump(
+        self,
+        file: Union[str, os.PathLike],
+        base_key: str = "",
+        save_models: bool = True,
+        save_jit: bool = False,
+    ):
+        """Saves the LUMETorchModel wrapper configuration to a YAML file.
+
+        This method serializes both the underlying torch_model and the wrapper's
+        initial_inputs state. The torch model is saved using its own dump method,
+        and the wrapper configuration references the torch model file.
+
+        Parameters
+        ----------
+        file : str or os.PathLike
+            File path to which the YAML formatted string and corresponding files are saved.
+        base_key : str, optional
+            Base key for serialization.
+        save_models : bool, optional
+            Determines whether models are saved to file.
+        save_jit : bool, optional
+            Determines whether the model is saved as TorchScript.
+
+        """
+        logger.info(f"Dumping LUMETorchModel wrapper configuration to: {file}")
+
+        # Get the file prefix for the wrapper
+        file_prefix = os.path.splitext(os.path.abspath(file))[0]
+        file_dir = os.path.dirname(os.path.abspath(file))
+        filename_prefix = os.path.basename(file_prefix)
+
+        # Create a filename for the underlying torch model
+        torch_model_filename = f"{filename_prefix}_torch_model.yaml"
+        torch_model_filepath = os.path.join(file_dir, torch_model_filename)
+
+        # Dump the underlying torch model
+        logger.debug(f"Dumping underlying torch model to: {torch_model_filepath}")
+        self.torch_model.dump(
+            torch_model_filepath,
+            base_key=base_key,
+            save_models=save_models,
+            save_jit=save_jit,
+        )
+
+        # Get the fully qualified model class name
+        torch_model_class = self.torch_model.__class__
+        torch_model_class_path = (
+            f"{torch_model_class.__module__}.{torch_model_class.__name__}"
+        )
+
+        # Create wrapper configuration
+        wrapper_config = {
+            "model_class": "LUMETorchModel",
+            "torch_model_file": torch_model_filename,  # Relative path
+            "torch_model_class": torch_model_class_path,  # Store for easier loading
+            "initial_inputs": self._initial_inputs,
+        }
+
+        # Write wrapper configuration to file
+        with open(file, "w") as f:
+            yaml.dump(wrapper_config, f, default_flow_style=None, sort_keys=False)
+
+        logger.info(f"Successfully dumped LUMETorchModel wrapper to: {file}")
+
+    @classmethod
+    def from_file(cls, filename: str):
+        """Loads a LUMETorchModel from a YAML file.
+
+        Parameters
+        ----------
+        filename : str
+            Path to the YAML file containing the wrapper configuration.
+
+        Returns
+        -------
+        LUMETorchModel
+            Instance of the wrapper loaded from the file.
+
+        Raises
+        ------
+        OSError
+            If the file does not exist.
+
+        """
+        if not os.path.exists(filename):
+            raise OSError(f"File {filename} is not found.")
+
+        logger.info(f"Loading LUMETorchModel from file: {filename}")
+        with open(filename, "r") as file:
+            return cls.from_yaml(file, filename)
+
+    @classmethod
+    def from_yaml(
+        cls, yaml_obj: Union[str, TextIOWrapper], config_file: Optional[str] = None
+    ):
+        """Loads a LUMETorchModel from a YAML string or file object.
+
+        Parameters
+        ----------
+        yaml_obj : str or TextIOWrapper
+            YAML formatted string or file object containing the wrapper configuration.
+        config_file : str, optional
+            Path to the configuration file (used to resolve relative paths).
+
+        Returns
+        -------
+        LUMETorchModel
+            Instance of the wrapper loaded from the YAML configuration.
+
+        Raises
+        ------
+        ValueError
+            If the configuration is invalid or torch_model_file is missing.
+
+        """
+        # Load the YAML configuration
+        if isinstance(yaml_obj, TextIOWrapper):
+            logger.debug(f"Reading configuration from file wrapper: {yaml_obj.name}")
+            config = yaml.safe_load(yaml_obj.read())
+            config_file = os.path.abspath(yaml_obj.name)
+        elif isinstance(yaml_obj, str):
+            if os.path.exists(yaml_obj):
+                logger.debug(f"Loading configuration from file: {yaml_obj}")
+                with open(yaml_obj, "r") as f:
+                    config = yaml.safe_load(f.read())
+                config_file = os.path.abspath(yaml_obj)
+            else:
+                logger.debug("Parsing configuration from YAML string")
+                config = yaml.safe_load(yaml_obj)
+        else:
+            raise ValueError("yaml_obj must be a string or file object")
+
+        # Validate configuration
+        if "torch_model_file" not in config:
+            raise ValueError(
+                "Configuration must include 'torch_model_file' specifying the path "
+                "to the underlying torch model YAML file."
+            )
+
+        # Resolve the torch model file path
+        torch_model_file = config["torch_model_file"]
+        if config_file is not None and not os.path.isabs(torch_model_file):
+            # Resolve relative path
+            config_dir = os.path.dirname(config_file)
+            torch_model_file = os.path.join(config_dir, torch_model_file)
+
+        logger.debug(f"Loading underlying torch model from: {torch_model_file}")
+
+        # Try to get the model class path from wrapper config first
+        model_class_name = config.get("torch_model_class")
+
+        # If not in wrapper config, read from torch model file
+        if model_class_name is None:
+            with open(torch_model_file, "r") as f:
+                torch_config = yaml.safe_load(f.read())
+
+            if "model_class" not in torch_config:
+                raise ValueError(
+                    f"Torch model configuration in {torch_model_file} must include 'model_class'"
+                )
+            model_class_name = torch_config["model_class"]
+
+        # Try to import the model class
+        torch_model_class = None
+
+        # First check if it's in lume_torch.models
+        try:
+            from lume_torch.models import get_model
+
+            torch_model_class = get_model(model_class_name)
+            logger.debug(
+                f"Loaded model class from lume_torch.models: {model_class_name}"
+            )
+        except (KeyError, ImportError) as e:
+            logger.debug(
+                f"Could not load model class {model_class_name} from lume_torch.models: {e}"
+            )
+
+        # If not found, try to import from the module path if it's a fully qualified name
+        if torch_model_class is None and "." in model_class_name:
+            try:
+                module_path, class_name = model_class_name.rsplit(".", 1)
+                module = importlib.import_module(module_path)
+                torch_model_class = getattr(module, class_name)
+                logger.debug(f"Loaded model class from module path: {model_class_name}")
+            except (ImportError, AttributeError) as e:
+                logger.debug(
+                    f"Could not import from module path {model_class_name}: {e}"
+                )
+
+        # If still not found, raise an error
+        if torch_model_class is None:
+            raise ValueError(
+                f"Could not load model class: {model_class_name}. "
+                "The class must be either registered in lume_torch.models or "
+                "accessible via a fully qualified module path."
+            )
+
+        # Load the torch model
+        torch_model = torch_model_class.from_file(torch_model_file)
+
+        # Get initial inputs from config
+        initial_inputs = config.get("initial_inputs", None)
+
+        logger.info("Successfully loaded LUMETorchModel wrapper")
+
+        # Create and return the wrapper instance
+        return cls(torch_model=torch_model, initial_inputs=initial_inputs)
