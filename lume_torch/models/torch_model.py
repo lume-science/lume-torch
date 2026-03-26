@@ -683,14 +683,13 @@ class TorchModel(LUMETorch):
             Tensor of transformed inputs to be passed to the model.
 
         """
-        # Make at least 2D
-        if input_tensor.ndim == 0:
-            input_tensor = input_tensor.unsqueeze(0)
-        if input_tensor.ndim == 1:
-            input_tensor = input_tensor.unsqueeze(0)
-
         for transformer in self.input_transformers:
             if isinstance(transformer, ReversibleInputTransform):
+                # Make at least 2D for botorch transforms, which expect (batch, features)
+                if input_tensor.ndim == 0:
+                    input_tensor = input_tensor.unsqueeze(0)
+                if input_tensor.ndim == 1:
+                    input_tensor = input_tensor.unsqueeze(0)
                 input_tensor = transformer.transform(input_tensor)
             else:
                 input_tensor = transformer(input_tensor)
@@ -770,17 +769,11 @@ class TorchModel(LUMETorch):
                     # Shape is (batch,), reshape to (batch, 1)
                     parsed_outputs[self.output_names[0]] = output.unsqueeze(-1)
                 else:
-                    # 3D or higher dimensional - squeeze last dim if it's 1
-                    # This handles multi-sample cases: (batch, samples, 1) -> (batch, samples)
+                    # 3D or higher: preserve all batch/sample dims, ensure last dim is 1
                     if output.shape[-1] != 1:
                         parsed_outputs[self.output_names[0]] = output.unsqueeze(-1)
                     else:
-                        # Shouldn't happen, but handle by squeezing all and adding feature dim
-                        parsed_outputs[self.output_names[0]] = (
-                            output.squeeze().unsqueeze(-1)
-                            if output.squeeze().dim() > 0
-                            else output.squeeze().unsqueeze(0).unsqueeze(-1)
-                        )
+                        parsed_outputs[self.output_names[0]] = output
             else:
                 # For non-scalar outputs (NDVariable), keep original behavior
                 parsed_outputs[self.output_names[0]] = output.squeeze()
@@ -798,12 +791,8 @@ class TorchModel(LUMETorch):
                         # Scalar output, reshape to (1, 1)
                         parsed_outputs[output_name] = output.unsqueeze(0).unsqueeze(-1)
                     else:
-                        # Already has proper dimensions or higher, ensure last dim is 1
-                        parsed_outputs[output_name] = (
-                            output.squeeze().unsqueeze(-1)
-                            if output.squeeze().dim() > 0
-                            else output.squeeze().unsqueeze(0).unsqueeze(-1)
-                        )
+                        # 2D+ (e.g. batch, samples): add feature dim
+                        parsed_outputs[output_name] = output.unsqueeze(-1)
                 else:
                     # For non-scalar outputs (NDVariable), keep original behavior
                     parsed_outputs[output_name] = output.squeeze()

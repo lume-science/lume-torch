@@ -193,7 +193,7 @@ class TestTorchModule:
             input_order=[california_model.input_names[0]],
         )
         # 2D old-format: (batch, n_features) = (3, 1) — ndim=2, last dim=1
-        input_2d = deepcopy(california_test_input_tensor[:, 0].unsqueeze(-1))  # (3, 1)
+        input_2d = california_test_input_tensor[:, 0, 0].unsqueeze(-1)  # (3, 1)
         # 3D new-format: (batch, n_features, 1) = (3, 1, 1) — ndim=3
         input_3d = input_2d.unsqueeze(-1)  # (3, 1, 1)
 
@@ -201,7 +201,7 @@ class TestTorchModule:
         result_3d = lume_module(input_3d)
 
         assert tuple(result_2d.shape) == (3,)
-        assert all(torch.isclose(result_2d, result_3d))
+        assert torch.all(torch.isclose(result_2d, result_3d))
 
     def test_module_call_single_sample(
         self, california_test_input_tensor, california_module
@@ -212,7 +212,7 @@ class TestTorchModule:
         )  # shape (1,8)
         result = california_module(input_tensor)
 
-        assert tuple(result.size()) == ()
+        assert tuple(result.size()) == (1,)
         assert_california_module_result(result, idx=idx)
 
     def test_module_call_n_samples(
@@ -244,7 +244,7 @@ class TestTorchModule:
         )
         result = lume_module(input_tensor)
 
-        assert tuple(result.size()) == ()
+        assert tuple(result.size()) == (1,)
         assert_california_module_result(result, idx=idx)
 
     def test_module_call_manipulate_output(

@@ -72,6 +72,12 @@ class TorchModule(torch.nn.Module):
             )
         else:
             logger.debug(f"Initializing TorchModule with model: {type(model).__name__}")
+            if model.output_format != "tensor":
+                logger.warning(
+                    f"TorchModule requires output_format='tensor', "
+                    f"but got '{model.output_format}'. Switching to 'tensor'."
+                )
+                model.output_format = "tensor"
             self._model = model
             self._input_order = input_order
             self._output_order = output_order
@@ -116,8 +122,9 @@ class TorchModule(torch.nn.Module):
         model_input = self._tensor_to_dictionary(x)
         y_model = self.evaluate_model(model_input)
         y_model = self.manipulate_output(y_model)
-        # squeeze for use as prior mean in botorch GPs
-        y = self._dictionary_to_tensor(y_model).squeeze()
+        # squeeze trailing output-feature dim (K=1) for BoTorch Mean compatibility,
+        # but preserve all batch/sample dimensions
+        y = self._dictionary_to_tensor(y_model).squeeze(-1)
         return y
 
     def yaml(
