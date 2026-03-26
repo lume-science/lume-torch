@@ -95,6 +95,11 @@ class TorchModule(torch.nn.Module):
                 self.register_module(f"output_transformers_{i}", output_transformer)
             if not model.model.training:  # TorchModel defines train/eval mode
                 self.eval()
+            # Route forward to single-tensor or two-tensor implementation
+            if self._mixed_inputs or self._mixed_outputs:
+                self.forward = self._forward_mixed
+            else:
+                self.forward = self._forward_single
             logger.info(
                 f"Initialized TorchModule with {len(self.input_order)} inputs and {len(self.output_order)} outputs"
             )
@@ -141,7 +146,29 @@ class TorchModule(torch.nn.Module):
             isinstance(v, TorchScalarVariable) for v in self._model.output_variables
         )
 
-    def forward(self, x: torch.Tensor):
+    @property
+    def _mixed_inputs(self) -> bool:
+        """True when inputs contain a mix of TorchScalarVariable and TorchNDVariable."""
+        has_scalar = any(
+            isinstance(v, TorchScalarVariable) for v in self._model.input_variables
+        )
+        has_nd = any(
+            isinstance(v, TorchNDVariable) for v in self._model.input_variables
+        )
+        return has_scalar and has_nd
+
+    @property
+    def _mixed_outputs(self) -> bool:
+        """True when outputs contain a mix of TorchScalarVariable and TorchNDVariable."""
+        has_scalar = any(
+            isinstance(v, TorchScalarVariable) for v in self._model.output_variables
+        )
+        has_nd = any(
+            isinstance(v, TorchNDVariable) for v in self._model.output_variables
+        )
+        return has_scalar and has_nd
+
+    def _forward_single(self, x: torch.Tensor):
         x = self._validate_input(x)
         model_input = self._tensor_to_dictionary(x)
         y_model = self.evaluate_model(model_input)
@@ -152,6 +179,27 @@ class TorchModule(torch.nn.Module):
             # (K=1: (batch, 1) -> (batch,); K>1: (batch, K) unchanged)
             y = y.squeeze(-1)
         return y
+
+    def _forward_mixed(self, x_scalar: torch.Tensor, x_nd: torch.Tensor):
+        if x_scalar.dim() < 2:
+            raise ValueError(
+                f"Scalar input must be at least 2D ([batch, n_scalars]), "
+                f"received: {tuple(x_scalar.shape)}"
+            )
+        first_nd_var = next(
+            v for v in self._model.input_variables if isinstance(v, TorchNDVariable)
+        )
+        min_ndim = 2 + len(first_nd_var.shape)
+        if x_nd.dim() < min_ndim:
+            raise ValueError(
+                f"ND input must be at least {min_ndim}D "
+                f"([batch, n_nd_vars, *array_shape] where array_shape={first_nd_var.shape}), "
+                f"received: {tuple(x_nd.shape)}"
+            )
+        model_input = self._tensor_to_dictionary_mixed(x_scalar, x_nd)
+        y_model = self.evaluate_model(model_input)
+        y_model = self.manipulate_output(y_model)
+        return self._dictionary_to_tensor_mixed(y_model)
 
     def yaml(
         self,
@@ -290,6 +338,21 @@ class TorchModule(torch.nn.Module):
                 input_dict[input_name] = x[..., idx].unsqueeze(-1)
         return input_dict
 
+    def _tensor_to_dictionary_mixed(
+        self, x_scalar: torch.Tensor, x_nd: torch.Tensor
+    ) -> dict[str, torch.Tensor]:
+        input_dict = {}
+        scalar_idx = 0
+        nd_idx = 0
+        for var in self._model.input_variables:
+            if isinstance(var, TorchScalarVariable):
+                input_dict[var.name] = x_scalar[..., scalar_idx].unsqueeze(-1)
+                scalar_idx += 1
+            else:
+                input_dict[var.name] = x_nd[:, nd_idx, ...]
+                nd_idx += 1
+        return input_dict
+
     def _dictionary_to_tensor(self, y_model: dict[str, torch.Tensor]):
         output_list = []
         for output_name in self.output_order:
@@ -303,6 +366,25 @@ class TorchModule(torch.nn.Module):
             # -> (batch, K) for K outputs
             squeezed = [o.squeeze(-1) if o.shape[-1] == 1 else o for o in output_list]
             return torch.stack(squeezed, dim=-1)
+
+    def _dictionary_to_tensor_mixed(
+        self, y_model: dict[str, torch.Tensor]
+    ) -> tuple[torch.Tensor, torch.Tensor] | torch.Tensor:
+        scalar_outputs = []
+        nd_outputs = []
+        for var in self._model.output_variables:
+            val = y_model[var.name]
+            if isinstance(var, TorchScalarVariable):
+                scalar_outputs.append(
+                    val.squeeze(-1) if val.ndim > 0 and val.shape[-1] == 1 else val
+                )
+            else:
+                nd_outputs.append(val)
+        scalar_tensor = torch.stack(scalar_outputs, dim=-1) if scalar_outputs else None
+        nd_tensor = torch.stack(nd_outputs, dim=1) if nd_outputs else None
+        if scalar_tensor is not None and nd_tensor is not None:
+            return scalar_tensor, nd_tensor
+        return scalar_tensor if scalar_tensor is not None else nd_tensor
 
     def _validate_input(self, x: torch.Tensor) -> torch.Tensor:
         if self._nd_inputs:

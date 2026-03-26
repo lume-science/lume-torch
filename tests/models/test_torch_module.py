@@ -352,3 +352,56 @@ class TestTorchModuleND:
         assert module._scalar_outputs is True
         assert module._nd_inputs is False
         assert module._nd_outputs is False
+
+
+class TestTorchModuleMixed:
+    def test_mixed_forward(self, mixed_model_and_data):
+        model, batch_size = mixed_model_and_data
+        module = TorchModule(model=model)
+        # scalar inputs: (batch, 2), nd inputs: (batch, 1, 2, 3)
+        x_scalar = torch.ones(batch_size, 2, dtype=torch.float32)
+        x_nd = torch.ones(batch_size, 1, 2, 3, dtype=torch.float32)
+        y_scalar, y_nd = module(x_scalar, x_nd)
+        # scalar_head sums inputs: 1+1=2
+        assert tuple(y_scalar.shape) == (batch_size, 1)
+        assert torch.allclose(y_scalar, 2 * torch.ones(batch_size, 1))
+        # identity on images
+        assert tuple(y_nd.shape) == (batch_size, 1, 2, 3)
+        assert torch.allclose(y_nd, x_nd)
+
+    def test_mixed_forward_routing(self, mixed_model_and_data):
+        model, _ = mixed_model_and_data
+        module = TorchModule(model=model)
+        assert module.forward.__func__.__name__ == "_forward_mixed"
+
+    def test_scalar_forward_routing(self, california_model):
+        module = TorchModule(model=california_model)
+        assert module.forward.__func__.__name__ == "_forward_single"
+
+    def test_mixed_properties(self, mixed_model_and_data):
+        model, _ = mixed_model_and_data
+        module = TorchModule(model=model)
+        assert module._mixed_inputs is True
+        assert module._mixed_outputs is True
+        assert module._scalar_inputs is False
+        assert module._nd_inputs is False
+        assert module._scalar_outputs is False
+        assert module._nd_outputs is False
+
+    def test_mixed_validate_bad_scalar_input(self, mixed_model_and_data):
+        model, batch_size = mixed_model_and_data
+        module = TorchModule(model=model)
+        x_scalar_bad = torch.ones(batch_size, dtype=torch.float32)  # 1D, too few dims
+        x_nd = torch.ones(batch_size, 1, 2, 3, dtype=torch.float32)
+        with pytest.raises(ValueError, match="at least 2D"):
+            module(x_scalar_bad, x_nd)
+
+    def test_mixed_validate_bad_nd_input(self, mixed_model_and_data):
+        model, batch_size = mixed_model_and_data
+        module = TorchModule(model=model)
+        x_scalar = torch.ones(batch_size, 2, dtype=torch.float32)
+        x_nd_bad = torch.ones(
+            batch_size, 2, 3, dtype=torch.float32
+        )  # missing num_vars dim
+        with pytest.raises(ValueError, match="at least 4"):
+            module(x_scalar, x_nd_bad)

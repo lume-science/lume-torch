@@ -62,8 +62,13 @@ class TorchModel(LUMETorch):
 
     Notes
     -----
-    When using TorchNDVariable inputs, all inputs must be TorchNDVariable.
-    Mixing TorchScalarVariable and TorchNDVariable is not currently supported.
+    When using mixed TorchScalarVariable and TorchNDVariable inputs, the underlying
+    ``nn.Module`` must accept two positional arguments:
+    ``forward(scalar_tensor, nd_tensor)``, where ``scalar_tensor`` has shape
+    ``(batch, n_scalars)`` and ``nd_tensor`` has shape
+    ``(batch, n_nd_vars, *array_shape)``. For mixed outputs the model must return
+    a tuple ``(scalar_out, nd_out)``. Input transformers are applied to the scalar
+    tensor only; output transformers are not applied in the mixed case.
 
     """
 
@@ -314,11 +319,21 @@ class TorchModel(LUMETorch):
 
         """
         formatted_inputs = format_inputs(input_dict, tensor_kwargs=self._tkwargs)
-        input_tensor = self._arrange_inputs(formatted_inputs)
-        input_tensor = self._transform_inputs(input_tensor)
-        output_tensor = self.model(input_tensor)
-        output_tensor = self._transform_outputs(output_tensor)
-        parsed_outputs = self._parse_outputs(output_tensor)
+        model_args = self._arrange_inputs(formatted_inputs)
+        if isinstance(model_args, list):
+            # Mixed inputs: [scalar_tensor, nd_tensor] — transformers applied to scalar only
+            model_args[0] = self._transform_inputs(model_args[0])
+            output = self.model(*model_args)
+            if isinstance(output, tuple):
+                parsed_outputs = self._parse_outputs_mixed(output)
+            else:
+                output = self._transform_outputs(output)
+                parsed_outputs = self._parse_outputs(output)
+        else:
+            model_args = self._transform_inputs(model_args)
+            output = self.model(model_args)
+            output = self._transform_outputs(output)
+            parsed_outputs = self._parse_outputs(output)
         output_dict = self._prepare_outputs(parsed_outputs)
         return output_dict
 
@@ -578,9 +593,7 @@ class TorchModel(LUMETorch):
         )
 
         if contains_array and contains_scalar:
-            raise NotImplementedError(
-                "Mixing TorchScalarVariable and TorchNDVariable inputs is not supported."
-            )
+            return self._arrange_mixed_inputs(formatted_inputs)
 
         # All TorchNDVariable
         if contains_array:
@@ -668,6 +681,103 @@ class TorchModel(LUMETorch):
             )
 
         return input_tensor
+
+    def _arrange_mixed_inputs(
+        self, formatted_inputs: dict[str, torch.Tensor]
+    ) -> list[torch.Tensor]:
+        """Arrange mixed scalar and ND inputs into separate tensors.
+
+        Parameters
+        ----------
+        formatted_inputs : dict of str to torch.Tensor
+            Dictionary of formatted input tensors.
+
+        Returns
+        -------
+        list of torch.Tensor
+            ``[scalar_tensor, nd_tensor]`` where ``scalar_tensor`` has shape
+            ``(batch, n_scalars)`` and ``nd_tensor`` has shape
+            ``(batch, n_nd_vars, *array_shape)``.
+        """
+        scalar_vars = [
+            v for v in self.input_variables if isinstance(v, TorchScalarVariable)
+        ]
+        nd_vars = [v for v in self.input_variables if isinstance(v, TorchNDVariable)]
+
+        # --- Scalar tensor ---
+        scalar_defaults = torch.cat(
+            [self._default_to_tensor(v.default_value).flatten() for v in scalar_vars]
+        )
+        scalar_formatted = {
+            k: v
+            for k, v in formatted_inputs.items()
+            if k in {sv.name for sv in scalar_vars}
+        }
+        if scalar_formatted:
+            batch_shape = None
+            for var in scalar_vars:
+                if var.name in scalar_formatted:
+                    value = scalar_formatted[var.name]
+                    if value.ndim > 0 and value.shape[-1] in (0, 1):
+                        batch_shape = value.shape[:-1]
+                    else:
+                        batch_shape = value.shape
+                    break
+            if batch_shape and len(batch_shape) > 0:
+                expanded_shape = (*batch_shape, scalar_defaults.shape[0])
+                scalar_tensor = (
+                    scalar_defaults.unsqueeze(0).expand(expanded_shape).clone()
+                )
+            else:
+                scalar_tensor = scalar_defaults.unsqueeze(0)
+            for idx, var in enumerate(scalar_vars):
+                if var.name in scalar_formatted:
+                    value = scalar_formatted[var.name]
+                    if value.ndim > 0 and value.shape[-1] == 1:
+                        scalar_tensor[..., idx] = value.squeeze(-1)
+                    else:
+                        scalar_tensor[..., idx] = value
+        else:
+            scalar_tensor = scalar_defaults.unsqueeze(0)
+
+        # --- ND tensor ---
+        nd_tensor_list = []
+        nd_batch_shape = None
+        for var in nd_vars:
+            value = (
+                formatted_inputs[var.name]
+                if var.name in formatted_inputs
+                else self._default_to_tensor(var.default_value)
+            )
+            expected_sample_shape = tuple(var.shape)
+            sample_ndim = len(expected_sample_shape)
+            if value.shape[-sample_ndim:] != expected_sample_shape:
+                raise ValueError(
+                    f"Input {var.name} has shape {value.shape}, "
+                    f"expected sample shape {expected_sample_shape}"
+                )
+            current_batch = value.shape[:-sample_ndim]
+            if current_batch == torch.Size():
+                value = value.unsqueeze(0)
+                current_batch = torch.Size([1])
+            if nd_batch_shape is None:
+                nd_batch_shape = current_batch
+            elif current_batch != nd_batch_shape:
+                raise ValueError(
+                    f"ND inputs have inconsistent batch shapes: "
+                    f"{nd_batch_shape} vs {current_batch}"
+                )
+            nd_tensor_list.append(value.to(**self._tkwargs))
+
+        nd_tensor = torch.stack(nd_tensor_list, dim=1)  # (batch, n_nd_vars, *shape)
+
+        if scalar_tensor.shape[0] != nd_tensor.shape[0]:
+            raise ValueError(
+                f"Scalar inputs have batch size {scalar_tensor.shape[0]} but ND inputs "
+                f"have batch size {nd_tensor.shape[0]}. Ensure all inputs share the same batch size."
+            )
+
+        return [scalar_tensor.to(**self._tkwargs), nd_tensor]
 
     def _transform_inputs(self, input_tensor: torch.Tensor) -> torch.Tensor:
         """Applies transformations to the inputs.
@@ -798,6 +908,44 @@ class TorchModel(LUMETorch):
                     parsed_outputs[output_name] = output.squeeze()
 
         return parsed_outputs
+
+    def _parse_outputs_mixed(
+        self, output_tuple: tuple[torch.Tensor, torch.Tensor]
+    ) -> dict[str, torch.Tensor]:
+        """Parse model output when the model returns a (scalar_out, nd_out) tuple.
+
+        Parameters
+        ----------
+        output_tuple : tuple of torch.Tensor
+            ``(scalar_out, nd_out)`` where ``scalar_out`` has shape
+            ``(batch, n_scalar_outs)`` or ``(batch,)`` for a single scalar output,
+            and ``nd_out`` has shape ``(batch, n_nd_outs, *array_shape)``.
+
+        Returns
+        -------
+        dict of str to torch.Tensor
+        """
+        scalar_out, nd_out = output_tuple
+        parsed = {}
+        scalar_idx = 0
+        nd_idx = 0
+        for var in self.output_variables:
+            if isinstance(var, TorchScalarVariable):
+                out = (
+                    scalar_out[..., scalar_idx] if scalar_out.dim() > 1 else scalar_out
+                )
+                parsed[var.name] = (
+                    out.unsqueeze(-1)
+                    if out.dim() >= 1
+                    else out.unsqueeze(0).unsqueeze(-1)
+                )
+                scalar_idx += 1
+            else:
+                parsed[var.name] = (
+                    nd_out[:, nd_idx, ...] if nd_out.dim() > len(var.shape) else nd_out
+                )
+                nd_idx += 1
+        return parsed
 
     def _prepare_outputs(
         self,

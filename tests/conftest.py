@@ -211,6 +211,64 @@ def nd_model_and_data():
     return model, batch_input
 
 
+@pytest.fixture(scope="module")
+def mixed_model_and_data():
+    """A TorchModel with mixed TorchScalarVariable and TorchNDVariable inputs/outputs.
+
+    Inputs:  2 TorchScalarVariables (x1, x2) + 1 TorchNDVariable (image, shape (2, 3))
+    Outputs: 1 TorchScalarVariable (y_scalar) + 1 TorchNDVariable (y_image, shape (2, 3))
+
+    The underlying nn.Module:
+    - scalar_head: Linear(2, 1, bias=False) with ones weights (output = sum of inputs)
+    - img_linear:  Linear(6, 6, bias=False) with eye weights (identity on flat image)
+    """
+    array_shape = (2, 3)
+    n_elements = array_shape[0] * array_shape[1]
+
+    input_variables = [
+        TorchScalarVariable(name="x1", default_value=0.0, value_range=(-1.0, 1.0)),
+        TorchScalarVariable(name="x2", default_value=0.0, value_range=(-1.0, 1.0)),
+        TorchNDVariable(
+            name="image",
+            shape=array_shape,
+            default_value=torch.zeros(array_shape, dtype=torch.float32),
+        ),
+    ]
+    output_variables = [
+        TorchScalarVariable(name="y_scalar"),
+        TorchNDVariable(name="y_image", shape=array_shape),
+    ]
+
+    class MixedModel(torch.nn.Module):
+        def __init__(self, n_scalars, n_elements):
+            super().__init__()
+            self.scalar_head = torch.nn.Linear(n_scalars, 1, bias=False)
+            torch.nn.init.ones_(
+                self.scalar_head.weight
+            )  # output = sum of scalar inputs
+            self.img_linear = torch.nn.Linear(n_elements, n_elements, bias=False)
+            torch.nn.init.eye_(self.img_linear.weight)  # identity on images
+
+        def forward(self, scalars, images):
+            # scalars: (batch, n_scalars), images: (batch, n_nd_vars, H, W)
+            scalar_out = self.scalar_head(scalars)  # (batch, 1)
+            batch, n_imgs = images.shape[0], images.shape[1]
+            rest = images.shape[2:]
+            flat = images.reshape(batch, n_imgs, -1)
+            img_out = self.img_linear(flat).reshape(batch, n_imgs, *rest)
+            return scalar_out, img_out
+
+    nn_model = MixedModel(n_scalars=2, n_elements=n_elements)
+    model = TorchModel(
+        model=nn_model,
+        input_variables=input_variables,
+        output_variables=output_variables,
+        precision="single",
+        fixed_model=False,
+    )
+    return model, 3  # batch_size=3
+
+
 @pytest.fixture(scope="session")
 def gp_variables() -> dict[
     str, Union[list[TorchScalarVariable], list[DistributionVariable]]
