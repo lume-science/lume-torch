@@ -10,6 +10,7 @@ import torch
 from lume_torch.base import parse_config, recursive_serialize
 from lume_torch.models.torch_model import TorchModel
 from lume_torch.mlflow_utils import register_model
+from lume_torch.variables import TorchScalarVariable, TorchNDVariable
 
 logger = logging.getLogger(__name__)
 
@@ -116,15 +117,40 @@ class TorchModule(torch.nn.Module):
         else:
             return self._output_order
 
+    @property
+    def _nd_inputs(self) -> bool:
+        """True when every input variable is a TorchNDVariable."""
+        return all(isinstance(v, TorchNDVariable) for v in self._model.input_variables)
+
+    @property
+    def _nd_outputs(self) -> bool:
+        """True when every output variable is a TorchNDVariable."""
+        return all(isinstance(v, TorchNDVariable) for v in self._model.output_variables)
+
+    @property
+    def _scalar_inputs(self) -> bool:
+        """True when every input variable is a TorchScalarVariable."""
+        return all(
+            isinstance(v, TorchScalarVariable) for v in self._model.input_variables
+        )
+
+    @property
+    def _scalar_outputs(self) -> bool:
+        """True when every output variable is a TorchScalarVariable."""
+        return all(
+            isinstance(v, TorchScalarVariable) for v in self._model.output_variables
+        )
+
     def forward(self, x: torch.Tensor):
-        # input shape: [..., n_features] or [..., n_features, 1] for scalar variables
         x = self._validate_input(x)
         model_input = self._tensor_to_dictionary(x)
         y_model = self.evaluate_model(model_input)
         y_model = self.manipulate_output(y_model)
-        # squeeze trailing output-feature dim (K=1) for BoTorch Mean compatibility,
-        # but preserve all batch/sample dimensions
-        y = self._dictionary_to_tensor(y_model).squeeze(-1)
+        y = self._dictionary_to_tensor(y_model)
+        if self._scalar_outputs:
+            # Remove trailing output-feature dim for BoTorch Mean compatibility
+            # (K=1: (batch, 1) -> (batch,); K>1: (batch, K) unchanged)
+            y = y.squeeze(-1)
         return y
 
     def yaml(
@@ -250,46 +276,63 @@ class TorchModule(torch.nn.Module):
 
     def _tensor_to_dictionary(self, x: torch.Tensor):
         input_dict = {}
-        # Handle both old format (..., n_features) and new format (..., n_features, 1)
-        # New format requires at least 3 dimensions with last dim == 1
-        if x.ndim >= 3 and x.shape[-1] == 1:
-            # New scalar format: (..., n_features, 1)
-            # Index the second-to-last dimension and keep trailing 1
+        if self._nd_inputs:
+            # ND format: (batch, num_vars, *array_shape) — slice dim 1 per variable
+            for idx, input_name in enumerate(self.input_order):
+                input_dict[input_name] = x[:, idx, ...]
+        elif x.ndim >= 3 and x.shape[-1] == 1:
+            # Scalar new format: (..., n_features, 1) — index second-to-last dim
             for idx, input_name in enumerate(self.input_order):
                 input_dict[input_name] = x[..., idx, :]
         else:
-            # Old format: (..., n_features)
-            # Index last dimension and add trailing 1
+            # Scalar old format: (..., n_features) — index last dim, add trailing 1
             for idx, input_name in enumerate(self.input_order):
                 input_dict[input_name] = x[..., idx].unsqueeze(-1)
         return input_dict
 
     def _dictionary_to_tensor(self, y_model: dict[str, torch.Tensor]):
-        # Model outputs have shape (batch, 1) for single-sample or (batch, samples) for multi-sample
-        # We need to stack them into (..., n_outputs) format
         output_list = []
         for output_name in self.output_order:
-            output = y_model[output_name]
-            # If output has trailing 1 (single-sample), squeeze it for stacking
-            # Multi-sample outputs like (batch, samples) are kept as-is
-            if output.shape[-1] == 1:
-                output = output.squeeze(-1)
-            output_list.append(output)
+            output_list.append(y_model[output_name])
 
-        output_tensor = torch.stack(output_list, dim=-1)
-        return output_tensor
-
-    @staticmethod
-    def _validate_input(x: torch.Tensor) -> torch.Tensor:
-        if x.dim() <= 1:
-            logger.error(
-                f"Invalid input dimensions: expected at least 2D ([n_samples, n_features]), got {tuple(x.shape)}"
-            )
-            raise ValueError(
-                f"Expected input dim to be at least 2 ([n_samples, n_features]), received: {tuple(x.shape)}"
-            )
+        if self._nd_outputs:
+            # ND outputs: stack along dim 1 -> (batch, num_outputs, *array_shape)
+            return torch.stack(output_list, dim=1)
         else:
-            return x
+            # Scalar outputs: squeeze trailing feature dim then stack along last dim
+            # -> (batch, K) for K outputs
+            squeezed = [o.squeeze(-1) if o.shape[-1] == 1 else o for o in output_list]
+            return torch.stack(squeezed, dim=-1)
+
+    def _validate_input(self, x: torch.Tensor) -> torch.Tensor:
+        if self._nd_inputs:
+            # ND inputs: (batch, num_vars, *array_shape)
+            # Minimum ndim = 1 (batch) + 1 (num_vars) + len(array_shape of first var)
+            first_var = self._model.input_variables[0]
+            min_ndim = 2 + len(first_var.shape)
+            if x.dim() < min_ndim:
+                logger.error(
+                    f"Invalid input dimensions for ND variables: expected at least {min_ndim}D "
+                    f"([batch, num_vars, *array_shape] where array_shape={first_var.shape}), "
+                    f"got {tuple(x.shape)}"
+                )
+                raise ValueError(
+                    f"Expected input dim to be at least {min_ndim} "
+                    f"([batch, num_vars, *array_shape] where array_shape={first_var.shape}) "
+                    f"for TorchNDVariable inputs, received: {tuple(x.shape)}"
+                )
+        else:
+            # Scalar inputs: expect at least 2D ([batch, n_features] or [batch, n_features, 1])
+            if x.dim() <= 1:
+                logger.error(
+                    f"Invalid input dimensions: expected at least 2D ([n_samples, n_features]), "
+                    f"got {tuple(x.shape)}"
+                )
+                raise ValueError(
+                    f"Expected input dim to be at least 2 ([n_samples, n_features]), "
+                    f"received: {tuple(x.shape)}"
+                )
+        return x
 
     def register_to_mlflow(
         self,
