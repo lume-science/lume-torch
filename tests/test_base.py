@@ -227,6 +227,18 @@ class TestBaseModel:
                 {"fixed": 9.0, normal_var.name: 2.0}, check_read_only=True
             )
 
+    def test_input_validation_config_unknown_key_raises(self, simple_variables):
+        """Setting input_validation_config with a key that isn't an input variable name raises."""
+        example_model = ExampleModel(**simple_variables)
+        with pytest.raises(ValueError, match="unknown variable name"):
+            example_model.input_validation_config = {"nonexistent_var": "error"}
+
+    def test_output_validation_config_unknown_key_raises(self, simple_variables):
+        """Setting output_validation_config with a key that isn't an output variable name raises."""
+        example_model = ExampleModel(**simple_variables)
+        with pytest.raises(ValueError, match="unknown variable name"):
+            example_model.output_validation_config = {"nonexistent_var": "error"}
+
     def test_output_validation(self, simple_variables):
         example_model = ExampleModel(**simple_variables)
         output_variables = simple_variables["output_variables"]

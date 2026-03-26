@@ -9,7 +9,7 @@ from io import TextIOWrapper
 import yaml
 import torch
 import numpy as np
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from lume_torch.variables import (
     TorchScalarVariable,
@@ -424,7 +424,8 @@ class LUMETorch(BaseModel, ABC):
             for name, val in value.items():
                 if isinstance(val, dict):
                     variable_class = get_variable(val["variable_class"])
-                    new_value.append(variable_class(name=name, **val))
+                    val_kwargs = {k: v for k, v in val.items() if k != "variable_class"}
+                    new_value.append(variable_class(name=name, **val_kwargs))
                 elif isinstance(
                     val,
                     (
@@ -485,6 +486,33 @@ class LUMETorch(BaseModel, ABC):
         verify_unique_variable_names(value)
         return value
 
+    @field_validator(
+        "input_validation_config", "output_validation_config", mode="before"
+    )
+    @classmethod
+    def _check_validation_config_is_dict(cls, value):
+        # Let pydantic handle type errors; only dicts need key checks (done in model_validator)
+        return value
+
+    @model_validator(mode="after")
+    def _check_validation_config_keys(self):
+        """Raise if any key in input_/output_validation_config is not a known variable name."""
+        if self.input_validation_config is not None:
+            invalid = set(self.input_validation_config) - set(self.input_names)
+            if invalid:
+                raise ValueError(
+                    f"input_validation_config contains unknown variable name(s): "
+                    f"{sorted(invalid)}. Valid input names: {sorted(self.input_names)}"
+                )
+        if self.output_validation_config is not None:
+            invalid = set(self.output_validation_config) - set(self.output_names)
+            if invalid:
+                raise ValueError(
+                    f"output_validation_config contains unknown variable name(s): "
+                    f"{sorted(invalid)}. Valid output names: {sorted(self.output_names)}"
+                )
+        return self
+
     @property
     def input_names(self) -> list[str]:
         return [var.name for var in self.input_variables]
@@ -511,7 +539,7 @@ class LUMETorch(BaseModel, ABC):
         Validates that the keys in the input dictionary are a subset of the valid variable names.
         """
         valid_keys = self.input_names if dict_name == "input" else self.output_names
-        valid_names = {name for name in valid_keys}
+        valid_names = set(valid_keys)
         invalid_keys = set(in_dict.keys()) - valid_names
         if invalid_keys:
             raise ValueError(

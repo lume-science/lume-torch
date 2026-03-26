@@ -99,10 +99,15 @@ class DistributionVariable(Variable):
 
     unit: Optional[str] = None
 
+    model_config = ConfigDict(extra="forbid")
+
     @model_validator(mode="before")
     @classmethod
     def _compat_is_constant(cls, data: Any) -> Any:
-        return _normalize_legacy_read_only(data)
+        data = _normalize_legacy_read_only(data)
+        if isinstance(data, dict):
+            data = {k: v for k, v in data.items() if k != "variable_class"}
+        return data
 
     def validate_value(
         self, value: TDistribution, config: Optional[ConfigEnum] = None, **kwargs
@@ -159,7 +164,7 @@ class TorchScalarVariable(_BaseScalarVariable):
         a floating-point type without enforcing a specific precision.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     default_value: Optional[Union[Tensor, float]] = None
     dtype: Optional[torch.dtype] = None
@@ -167,7 +172,10 @@ class TorchScalarVariable(_BaseScalarVariable):
     @model_validator(mode="before")
     @classmethod
     def _compat_is_constant(cls, data: Any) -> Any:
-        return _normalize_legacy_read_only(data)
+        data = _normalize_legacy_read_only(data)
+        if isinstance(data, dict):
+            data = {k: v for k, v in data.items() if k != "variable_class"}
+        return data
 
     @field_serializer("default_value")
     def serialize_default_value(
@@ -385,7 +393,7 @@ class TorchScalarVariable(_BaseScalarVariable):
         return failed
 
 
-class TorchNDVariable(NDVariable):
+class TorchNDVariable(NDVariable):  # noqa: E303
     """Variable for PyTorch tensor data with arbitrary shape and dtype.
 
     Attributes
@@ -494,6 +502,10 @@ class TorchNDVariable(NDVariable):
             return None
         return value.tolist()
 
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True, validate_assignment=True, extra="forbid"
+    )
+
     @model_validator(mode="before")
     @classmethod
     def _mark_coerced_default_value(cls, data: Any) -> Any:
@@ -509,6 +521,7 @@ class TorchNDVariable(NDVariable):
         """
         data = _normalize_legacy_read_only(data)
         if isinstance(data, dict):
+            data = {k: v for k, v in data.items() if k != "variable_class"}
             dv = data.get("default_value")
             if isinstance(dv, (list, tuple)):
                 data = dict(data)
