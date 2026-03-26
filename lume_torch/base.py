@@ -563,6 +563,10 @@ class LUMETorch(BaseModel, ABC):
                 )
             else:
                 # check all other default values in case of dynamic changes to defaults
+                if var.default_value is None:
+                    raise ValueError(
+                        f"Input variable '{var.name}' is missing from input_dict and has no default value."
+                    )
                 var.validate_value(var.default_value, config=config)
 
         return input_dict

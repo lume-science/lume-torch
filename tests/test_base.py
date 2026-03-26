@@ -175,6 +175,12 @@ class TestBaseModel:
         with pytest.raises(ValueError):
             model.input_validation({"good": 2.0})
 
+        # Try with no default
+        model.input_variables[0].default_value = None
+        # "bad" is absent; tries to grab the default but it's None, which should raise a ValueError about missing required input
+        with pytest.raises(ValueError):
+            model.input_validation({"good": 2.0})
+
     def test_input_validation_check_no_missing_inputs(self, simple_variables):
         """check_no_missing_inputs=True raises ValueError when a variable is absent."""
         example_model = ExampleModel(**simple_variables)
