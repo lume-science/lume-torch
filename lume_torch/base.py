@@ -493,18 +493,6 @@ class LUMETorch(BaseModel, ABC):
     def output_names(self) -> list[str]:
         return [var.name for var in self.output_variables]
 
-    @property
-    def default_input_validation_config(self) -> dict[str, ConfigEnum]:
-        """Determines default behavior during input validation (if input_validation_config is None)."""
-        return {var.name: var.default_validation_config for var in self.input_variables}
-
-    @property
-    def default_output_validation_config(self) -> dict[str, ConfigEnum]:
-        """Determines default behavior during output validation (if output_validation_config is None)."""
-        return {
-            var.name: var.default_validation_config for var in self.output_variables
-        }
-
     def evaluate(self, input_dict: dict[str, Any], **kwargs) -> dict[str, Any]:
         """Main evaluation function, child classes must implement the _evaluate method."""
         self._validate_dict_keys(input_dict, dict_name="input")
@@ -531,13 +519,22 @@ class LUMETorch(BaseModel, ABC):
                 f"Valid variables are: {sorted(valid_names)}"
             )
 
-    def input_validation(self, input_dict: dict[str, Any]) -> dict[str, Any]:
+    def input_validation(
+        self,
+        input_dict: dict[str, Any],
+        check_read_only: bool = False,
+        check_no_missing_inputs=False,
+    ) -> dict[str, Any]:
         """Validates input dictionary values against input variable specifications.
 
         Parameters
         ----------
         input_dict : dict of str to Any
             Dictionary of input variable names to values.
+        check_read_only : bool, optional
+            Whether to check that read-only variables match their default values, by default False.
+        check_no_missing_inputs : bool, optional
+            Whether to check for missing inputs, by default False.
 
         Returns
         -------
@@ -545,14 +542,28 @@ class LUMETorch(BaseModel, ABC):
             Validated input dictionary.
 
         """
-        for name, value in input_dict.items():
-            _config = (
+        # type/dtype check on raw user-provided values (before tensor conversion)
+        for var in self.input_variables:
+            config = (
                 None
                 if self.input_validation_config is None
-                else self.input_validation_config.get(name)
+                or var.name not in self.input_validation_config
+                else self.input_validation_config.get(var.name, None)
             )
-            var = self.input_variables[self.input_names.index(name)]
-            var.validate_value(value, config=_config)
+            if var.name in input_dict:
+                if var.read_only and check_read_only:
+                    # TODO: do we need both here?
+                    var.validate_value(var.default_value, config=config)
+                    var.validate_read_only(input_dict[var.name], config=config)
+                else:
+                    var.validate_value(input_dict[var.name], config=config)
+            elif var.name not in input_dict and check_no_missing_inputs:
+                raise ValueError(
+                    f"Missing required input variable '{var.name}' in input_dict."
+                )
+            else:
+                # check all other default values in case of dynamic changes to defaults
+                var.validate_value(var.default_value, config=config)
 
         return input_dict
 
@@ -579,7 +590,7 @@ class LUMETorch(BaseModel, ABC):
             _config = (
                 None
                 if self.output_validation_config is None
-                else self.output_validation_config.get(name)
+                else self.output_validation_config.get(name, None)
             )
             var = self.output_variables[self.output_names.index(name)]
             var.validate_value(value, config=_config)

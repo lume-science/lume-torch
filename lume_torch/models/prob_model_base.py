@@ -171,7 +171,10 @@ class ProbabilisticBaseModel(LUMETorch):
             Dictionary mapping output variable names to predictive distributions.
 
         """
-        return self._get_predictions(input_dict, **kwargs)
+        formatted_input_dict = format_inputs(
+            input_dict, tensor_kwargs=self._tkwargs, squeeze=True
+        )
+        return self._get_predictions(formatted_input_dict, **kwargs)
 
     @abstractmethod
     def _get_predictions(
@@ -210,46 +213,7 @@ class ProbabilisticBaseModel(LUMETorch):
             Validated input dictionary.
 
         """
-        # type/dtype check on raw user-provided values (before tensor conversion)
-        for var in self.input_variables:
-            config = (
-                None
-                if self.input_validation_config is None
-                else self.input_validation_config[var.name]
-            )
-            if var.name not in input_dict:
-                raise ValueError(
-                    f"Missing required input variable '{var.name}' in input_dict."
-                )
-            var.validate_value(input_dict[var.name], config=config)
-
-        # format inputs as tensors w/o changing the dtype
-        formatted_inputs = format_inputs(input_dict.copy())
-
-        # cast tensors to expected dtype and device
-        formatted_inputs = {
-            k: v.to(**self._tkwargs).squeeze(-1) for k, v in formatted_inputs.items()
-        }
-
-        return formatted_inputs
-
-    def output_validation(self, output_dict: dict[str, TDistribution]):
-        """Validates output distributions against output variable specifications.
-
-        Parameters
-        ----------
-        output_dict : dict of str to TDistribution
-            Output dictionary to validate.
-
-        """
-        for var in self.output_variables:
-            config = (
-                None
-                if self.output_validation_config is None
-                else self.output_validation_config[var.name]
-            )
-            if var.name in output_dict:
-                var.validate_value(output_dict[var.name], config=config)
+        return super().input_validation(input_dict, check_no_missing_inputs=True)
 
 
 class TorchDistributionWrapper(TDistribution):

@@ -313,7 +313,7 @@ class TorchModel(LUMETorch):
             Dictionary of output variable names to values.
 
         """
-        formatted_inputs = format_inputs(input_dict)
+        formatted_inputs = format_inputs(input_dict, tensor_kwargs=self._tkwargs)
         input_tensor = self._arrange_inputs(formatted_inputs)
         input_tensor = self._transform_inputs(input_tensor)
         output_tensor = self.model(input_tensor)
@@ -336,53 +336,7 @@ class TorchModel(LUMETorch):
             Validated input dictionary.
 
         """
-        # type/dtype check on raw user-provided values (before tensor conversion)
-        for var in self.input_variables:
-            config = (
-                None
-                if self.input_validation_config is None
-                or var.name not in self.input_validation_config
-                else self.input_validation_config[var.name]
-            )
-            if var.name in input_dict:
-                if var.read_only:
-                    var.validate_value(var.default_value, config=config)
-                    var.validate_read_only(input_dict[var.name], config=config)
-                else:
-                    var.validate_value(input_dict[var.name], config=config)
-            else:
-                # check all other default values in case of dynamic changes to defaults
-                var.validate_value(var.default_value, config=config)
-
-        # format inputs as tensors w/o changing the dtype
-        formatted_inputs = format_inputs(input_dict)
-
-        # cast tensors to expected dtype and device
-        formatted_inputs = {
-            k: v.to(**self._tkwargs) for k, v in formatted_inputs.items()
-        }
-
-        return formatted_inputs
-
-    def output_validation(self, output_dict: dict[str, Union[float, torch.Tensor]]):
-        """Validate the output dictionary after evaluation.
-
-        Parameters
-        ----------
-        output_dict : dict of str to float or torch.Tensor
-            Output dictionary to validate.
-
-        """
-        for var in self.output_variables:
-            config = (
-                None
-                if self.output_validation_config is None
-                or var.name not in self.output_validation_config
-                or self.output_validation_config[var.name] is None
-                else self.output_validation_config[var.name]
-            )
-            if var.name in output_dict:
-                var.validate_value(output_dict[var.name], config=config)
+        return super().input_validation(input_dict, check_read_only=True)
 
     def random_input(self, n_samples: int = 1) -> dict[str, torch.Tensor]:
         """Generates random input(s) for the model.
