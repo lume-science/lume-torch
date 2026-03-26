@@ -609,12 +609,25 @@ class TorchModel(LUMETorch):
                 if batch_shape is None:
                     batch_shape = current_batch
                 elif current_batch != batch_shape:
-                    raise ValueError(
-                        f"Inputs have inconsistent batch shapes: "
-                        f"{batch_shape} vs {current_batch}"
-                    )
+                    # Allow singleton batch to broadcast
+                    if current_batch == torch.Size([1]):
+                        value = value.expand(*batch_shape, *value.shape[1:])
+                    elif batch_shape == torch.Size([1]):
+                        batch_shape = current_batch
+                    else:
+                        raise ValueError(
+                            f"Inputs have inconsistent batch shapes: "
+                            f"{batch_shape} vs {current_batch}"
+                        )
 
                 tensor_list.append(value.to(**self._tkwargs))
+
+            # Expand any earlier singleton-batch tensors to the final batch_shape
+            if batch_shape != torch.Size([1]):
+                tensor_list = [
+                    t.expand(*batch_shape, *t.shape[1:]) if t.shape[0] == 1 else t
+                    for t in tensor_list
+                ]
 
             stacked = torch.stack(tensor_list, dim=1)  # (batch, num_arrays, ...)
             logger.debug(f"Arranged ND inputs into tensor shape: {stacked.shape}")
