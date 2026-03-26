@@ -552,7 +552,9 @@ class LUMETorch(BaseModel, ABC):
             )
             if var.name in input_dict:
                 if var.read_only and check_read_only:
-                    # TODO: do we need both here?
+                    # Validates that the default value is valid
+                    # and then checks that the provided value matches the default value
+                    # for read-only variables *for all samples in a batch*
                     var.validate_value(var.default_value, config=config)
                     var.validate_read_only(input_dict[var.name], config=config)
                 else:
