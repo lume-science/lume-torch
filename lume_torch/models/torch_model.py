@@ -621,52 +621,56 @@ class TorchModel(LUMETorch):
             return stacked
 
         # All TorchScalarVariables
-        default_list = []
+        defaults = torch.stack(
+            [
+                self._default_to_tensor(var.default_value).reshape(())
+                for var in self.input_variables
+            ]
+        ).to(**self._tkwargs)  # shape: (num_inputs,)
+
+        if not formatted_inputs:
+            return defaults.unsqueeze(0)  # (1, num_inputs)
+
+        # Determine batch shape and validate consistency across all provided inputs
+        batch_shape = None
         for var in self.input_variables:
-            default_list.append(self._default_to_tensor(var.default_value))
-
-        default_tensor = torch.cat([d.flatten() for d in default_list]).to(
-            **self._tkwargs
-        )
-
-        if formatted_inputs:
-            batch_shape = None
-            for var in self.input_variables:
-                if var.name in formatted_inputs:
-                    value = formatted_inputs[var.name]
-                    if value.ndim > 0 and value.shape[-1] in (0, 1):
-                        batch_shape = value.shape[:-1]
-                    else:
-                        batch_shape = value.shape
-                    break
-
-            if batch_shape and len(batch_shape) > 0:
-                expanded_shape = (*batch_shape, default_tensor.shape[0])
-                input_tensor = (
-                    default_tensor.unsqueeze(0).expand(expanded_shape).clone()
-                )
+            if var.name not in formatted_inputs:
+                continue
+            value = formatted_inputs[var.name]
+            if value.ndim == 0:
+                current_batch = torch.Size([])
+            elif value.ndim == 1:
+                current_batch = value.shape  # (batch,)
             else:
-                input_tensor = default_tensor.unsqueeze(0)
+                # (..., 1) — strip trailing feature dim
+                if value.shape[-1] != 1:
+                    raise ValueError(
+                        f"Scalar input '{var.name}' has unexpected shape {value.shape}; "
+                        f"expected 0D, 1D, or (..., 1)."
+                    )
+                current_batch = value.shape[:-1]
 
-            current_idx = 0
-            for var in self.input_variables:
-                if var.name in formatted_inputs:
-                    value = formatted_inputs[var.name]
-                    if value.ndim > 0 and value.shape[-1] == 1:
-                        input_tensor[..., current_idx] = value.squeeze(-1)
-                    else:
-                        input_tensor[..., current_idx] = value
-                current_idx += 1
+            if batch_shape is None:
+                batch_shape = current_batch
+            elif current_batch != batch_shape:
+                raise ValueError(
+                    f"Inconsistent batch shapes across scalar inputs: "
+                    f"{batch_shape} vs {current_batch} for '{var.name}'"
+                )
+
+        if batch_shape:
+            input_tensor = defaults.unsqueeze(0).expand(*batch_shape, -1).clone()
         else:
-            input_tensor = default_tensor.unsqueeze(0)
+            input_tensor = defaults.unsqueeze(0)  # (1, num_inputs)
 
-        expected_features = len(self.input_variables)
-        if input_tensor.shape[-1] != expected_features:
-            raise ValueError(
-                "Last dimension of input tensor doesn't match the expected number of features\n"
-                f"received: {input_tensor.shape}, expected {expected_features} as the last dimension"
-            )
+        for idx, var in enumerate(self.input_variables):
+            if var.name in formatted_inputs:
+                value = formatted_inputs[var.name].to(**self._tkwargs)
+                if value.ndim > 1 and value.shape[-1] == 1:
+                    value = value.squeeze(-1)
+                input_tensor[..., idx] = value
 
+        logger.debug(f"Arranged scalar inputs into tensor shape: {input_tensor.shape}")
         return input_tensor
 
     def _transform_inputs(self, input_tensor: torch.Tensor) -> torch.Tensor:
@@ -736,66 +740,40 @@ class TorchModel(LUMETorch):
         """
         parsed_outputs = {}
 
-        # Check if all outputs are scalar variables
         all_scalars = all(
             isinstance(v, TorchScalarVariable) for v in self.output_variables
         )
 
-        # Handle 0D and 1D tensors
+        # Normalize to at least 2D: (batch, features)
         if output_tensor.dim() == 0:
-            # 0D tensor - always add batch dimension at start
-            output_tensor = output_tensor.unsqueeze(0)
+            output_tensor = output_tensor.reshape(1, 1)
         elif output_tensor.dim() == 1:
-            # 1D tensor - interpretation depends on variable types
             if all_scalars and len(self.output_names) == 1:
-                # For single scalar output, 1D means (batch,) -> should become (batch, 1)
+                # (batch,) → (batch, 1)
                 output_tensor = output_tensor.unsqueeze(-1)
-            elif all_scalars and len(self.output_names) > 1:
-                # For multiple scalar outputs, 1D means (features,) -> should become (1, features)
-                output_tensor = output_tensor.unsqueeze(0)
             else:
-                # For non-scalar outputs, default to adding batch dimension at start
+                # (features,) → (1, features)
                 output_tensor = output_tensor.unsqueeze(0)
 
         if len(self.output_names) == 1:
-            output = output_tensor
-            # For scalar variables, ensure shape is (batch, 1) for single-sample batched outputs
-            # or (batch, samples) for multi-sample outputs
             if all_scalars:
-                if output.dim() == 2:
-                    # Already 2D: could be (batch, 1) or (batch, samples) - keep as is
-                    parsed_outputs[self.output_names[0]] = output
-                elif output.dim() == 1:
-                    # Shape is (batch,), reshape to (batch, 1)
-                    parsed_outputs[self.output_names[0]] = output.unsqueeze(-1)
-                else:
-                    # 3D or higher: preserve all batch/sample dims, ensure last dim is 1
-                    if output.shape[-1] != 1:
-                        parsed_outputs[self.output_names[0]] = output.unsqueeze(-1)
-                    else:
-                        parsed_outputs[self.output_names[0]] = output
+                # Scalar: keep full tensor, shape is (*batch, 1) or (*batch, features)
+                parsed_outputs[self.output_names[0]] = output_tensor
             else:
-                # For non-scalar outputs (NDVariable), keep original behavior
-                parsed_outputs[self.output_names[0]] = output.squeeze()
+                # ND: model returns (batch, num_outputs, *array_shape);
+                # remove the num_outputs dim (dim 1) for single-output models
+                # so _dictionary_to_tensor can re-stack along dim 1.
+                parsed_outputs[self.output_names[0]] = output_tensor.squeeze(1)
         else:
             for idx, output_name in enumerate(self.output_names):
                 output = output_tensor[..., idx]
                 var = self.output_variables[idx]
 
-                # For scalar variables, ensure shape is (batch, 1) for batched outputs
                 if isinstance(var, TorchScalarVariable):
-                    if output.dim() == 1:
-                        # Shape is (batch,), reshape to (batch, 1)
-                        parsed_outputs[output_name] = output.unsqueeze(-1)
-                    elif output.dim() == 0:
-                        # Scalar output, reshape to (1, 1)
-                        parsed_outputs[output_name] = output.unsqueeze(0).unsqueeze(-1)
-                    else:
-                        # 2D+ (e.g. batch, samples): add feature dim
-                        parsed_outputs[output_name] = output.unsqueeze(-1)
+                    # Ensure trailing feature dim: (*batch,) → (*batch, 1)
+                    parsed_outputs[output_name] = output.unsqueeze(-1)
                 else:
-                    # For non-scalar outputs (NDVariable), keep original behavior
-                    parsed_outputs[output_name] = output.squeeze()
+                    parsed_outputs[output_name] = output
 
         return parsed_outputs
 
