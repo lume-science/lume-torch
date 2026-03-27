@@ -152,7 +152,7 @@ class TestBaseModel:
 
     def test_input_validation_missing_input_validates_default(self, simple_variables):
         """Variables absent from input_dict have their default_value validated
-        instead of raising, when check_no_missing_inputs is False (the default).
+        instead of raising, when require_all_inputs is False (the default).
         Uses model_construct to bypass pydantic's own construction-time check
         so that we can set an out-of-range default and confirm input_validation
         catches it."""
@@ -182,24 +182,24 @@ class TestBaseModel:
             model.input_validation({"good": 2.0})
 
     def test_input_validation_check_no_missing_inputs(self, simple_variables):
-        """check_no_missing_inputs=True raises ValueError when a variable is absent."""
+        """require_all_inputs=True raises ValueError when a variable is absent."""
         example_model = ExampleModel(**simple_variables)
         input_variables = simple_variables["input_variables"]
+
+        example_model.require_all_inputs = True
 
         with pytest.raises(ValueError, match="Missing required input variable"):
             example_model.input_validation(
                 {input_variables[0].name: 1.0},
-                check_no_missing_inputs=True,
             )
 
         # providing all inputs does not raise
         example_model.input_validation(
             {input_variables[0].name: 1.0, input_variables[1].name: 2.0},
-            check_no_missing_inputs=True,
         )
 
     def test_input_validation_check_read_only(self, simple_variables):
-        """check_read_only=True calls validate_read_only for read-only variables."""
+        """Read-only enforcement is unconditional — driven by var.read_only."""
         read_only_var = TorchScalarVariable(
             name="fixed",
             default_value=1.0,
@@ -213,19 +213,11 @@ class TestBaseModel:
         model.input_validation_config = {"fixed": "error"}
 
         # value matches default — should pass
-        model.input_validation(
-            {"fixed": 1.0, normal_var.name: 2.0}, check_read_only=False
-        )
+        model.input_validation({"fixed": 1.0, normal_var.name: 2.0})
 
-        model.input_validation(
-            {"fixed": 1.0, normal_var.name: 2.0}, check_read_only=True
-        )
-
-        # value differs from default — validate_read_only should raise
+        # value differs from default — always raises (no opt-out toggle)
         with pytest.raises(Exception):
-            model.input_validation(
-                {"fixed": 9.0, normal_var.name: 2.0}, check_read_only=True
-            )
+            model.input_validation({"fixed": 9.0, normal_var.name: 2.0})
 
     def test_input_validation_config_unknown_key_raises(self, simple_variables):
         """Setting input_validation_config with a key that isn't an input variable name raises."""

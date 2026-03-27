@@ -40,10 +40,6 @@ class ProbabilisticBaseModel(LUMETorch):
         Evaluates the model by calling :meth:`_get_predictions`.
     _get_predictions(input_dict, **kwargs)
         Abstract method that returns a dictionary of output distributions.
-    input_validation(input_dict)
-        Validates and normalizes the input dictionary prior to evaluation.
-    output_validation(output_dict)
-        Validates the output dictionary of distributions.
 
     Notes
     -----
@@ -56,6 +52,7 @@ class ProbabilisticBaseModel(LUMETorch):
     output_variables: list[DistributionVariable]
     device: Union[torch.device, str] = "cpu"
     precision: str = "double"
+    require_all_inputs: bool = True
 
     @model_validator(mode="before")
     def validate_output_variables(cls, values: dict[str, Any]) -> dict[str, Any]:
@@ -198,22 +195,6 @@ class ProbabilisticBaseModel(LUMETorch):
 
         """
         pass
-
-    def input_validation(self, input_dict: dict[str, Union[float, torch.Tensor]]):
-        """Validates input dictionary before evaluation.
-
-        Parameters
-        ----------
-        input_dict : dict of str to float or torch.Tensor
-            Input dictionary to validate.
-
-        Returns
-        -------
-        dict of str to float or torch.Tensor
-            Validated input dictionary.
-
-        """
-        return super().input_validation(input_dict, check_no_missing_inputs=True)
 
 
 class TorchDistributionWrapper(TDistribution):

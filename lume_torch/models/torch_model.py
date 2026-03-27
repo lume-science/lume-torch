@@ -49,10 +49,6 @@ class TorchModel(LUMETorch):
     -------
     evaluate(input_dict, **kwargs)
         Evaluate the model on a dictionary of inputs and return outputs.
-    input_validation(input_dict)
-        Validate and normalize the input dictionary before evaluation.
-    output_validation(output_dict)
-        Validate the output dictionary after evaluation.
     random_input(n_samples=1)
         Generate random inputs consistent with the input variable ranges.
     random_evaluate(n_samples=1)
@@ -321,22 +317,6 @@ class TorchModel(LUMETorch):
         parsed_outputs = self._parse_outputs(output_tensor)
         output_dict = self._prepare_outputs(parsed_outputs)
         return output_dict
-
-    def input_validation(self, input_dict: dict[str, Union[float, torch.Tensor]]):
-        """Validate the input dictionary before evaluation.
-
-        Parameters
-        ----------
-        input_dict : dict of str to float or torch.Tensor
-            Input dictionary to validate.
-
-        Returns
-        -------
-        dict of str to float or torch.Tensor
-            Validated input dictionary.
-
-        """
-        return super().input_validation(input_dict, check_read_only=True)
 
     def random_input(self, n_samples: int = 1) -> dict[str, torch.Tensor]:
         """Generates random input(s) for the model.
