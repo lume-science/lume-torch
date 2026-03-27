@@ -219,6 +219,20 @@ class TestBaseModel:
         with pytest.raises(Exception):
             model.input_validation({"fixed": 9.0, normal_var.name: 2.0})
 
+    def test_input_validation_read_only_no_default_raises(self, simple_variables):
+        """Read-only input with no default_value raises when a value is provided."""
+        read_only_no_default = TorchScalarVariable(name="broken", read_only=True)
+        normal_var = simple_variables["input_variables"][1]
+        model = ExampleModel.model_construct(
+            input_variables=[read_only_no_default, normal_var],
+            output_variables=simple_variables["output_variables"],
+            input_validation_config=None,
+            output_validation_config=None,
+            require_all_inputs=False,
+        )
+        with pytest.raises(ValueError, match="read-only but has no default value"):
+            model.input_validation({"broken": 1.0, normal_var.name: 2.0})
+
     def test_input_validation_config_unknown_key_raises(self, simple_variables):
         """Setting input_validation_config with a key that isn't an input variable name raises."""
         example_model = ExampleModel(**simple_variables)

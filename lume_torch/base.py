@@ -600,7 +600,12 @@ class LUMETorch(BaseModel, ABC):
                 else self.input_validation_config.get(var.name, None)
             )
             if var.name in input_dict:
-                if var.read_only and var.default_value is not None:
+                if var.read_only:
+                    if var.default_value is None:
+                        raise ValueError(
+                            f"Input variable '{var.name}' is read-only but has "
+                            f"no default value to validate against."
+                        )
                     # Validates that the default value is valid
                     # and then checks that the provided value matches the default value
                     # for read-only variables *for all samples in a batch*
