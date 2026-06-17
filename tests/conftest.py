@@ -5,7 +5,11 @@ from typing import Any, Union
 import pytest
 
 from lume_torch.utils import variables_from_yaml
-from lume_torch.variables import TorchScalarVariable, DistributionVariable
+from lume_torch.variables import (
+    TorchScalarVariable,
+    TorchNDVariable,
+    DistributionVariable,
+)
 
 try:
     import torch
@@ -152,7 +156,61 @@ def california_module(california_model):
     return TorchModule(model=california_model)
 
 
-# GPModel fixtures
+@pytest.fixture(scope="module")
+def nd_model_and_data():
+    """A minimal TorchModel with a single TorchNDVariable input and output.
+
+    The model is a single-layer linear network mapping (C, H, W) -> (C, H, W)
+    via a learned weight on the flattened input = identity-like transform.
+    For test simplicity we use shape (2, 3) arrays.
+    """
+    array_shape = (2, 3)
+    n_elements = array_shape[0] * array_shape[1]  # 6
+
+    default_array = torch.zeros(array_shape, dtype=torch.float32)
+
+    input_var = TorchNDVariable(
+        name="array_in",
+        shape=array_shape,
+        default_value=default_array,
+    )
+    output_var = TorchNDVariable(
+        name="array_out",
+        shape=array_shape,
+    )
+
+    # Simple linear model: flatten -> linear -> reshape
+    class FlatLinear(torch.nn.Module):
+        def __init__(self, n):
+            super().__init__()
+            self.linear = torch.nn.Linear(n, n, bias=False)
+            # Initialise to identity so output == input (easy to verify)
+            torch.nn.init.eye_(self.linear.weight)
+
+        def forward(self, x):
+            batch = x.shape[0]
+            n_arrays = x.shape[1]
+            flat = x.reshape(batch, n_arrays, -1)  # (batch, 1, 6)
+            out = self.linear(flat)  # (batch, 1, 6)
+            return out.reshape(batch, n_arrays, *array_shape)  # (batch, 1, 2, 3)
+
+    nn_model = FlatLinear(n_elements)
+
+    model = TorchModel(
+        model=nn_model,
+        input_variables=[input_var],
+        output_variables=[output_var],
+        precision="single",
+        fixed_model=False,  # avoid grad-deactivation for the identity check
+    )
+
+    # A batch of 3 test arrays, each shape (2, 3)
+    test_input = torch.arange(n_elements, dtype=torch.float32).reshape(array_shape)
+    batch_input = test_input.unsqueeze(0).repeat(3, 1, 1)  # (3, 2, 3)
+
+    return model, batch_input
+
+
 @pytest.fixture(scope="session")
 def gp_variables() -> dict[
     str, Union[list[TorchScalarVariable], list[DistributionVariable]]

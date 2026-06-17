@@ -5,16 +5,11 @@ from copy import deepcopy
 
 import pytest
 
-try:
-    import torch
-    from botorch.models import SingleTaskGP
-    from lume_torch.models import TorchModel, TorchModule
+import torch
+from botorch.models import SingleTaskGP
+from lume_torch.models import TorchModel, TorchModule
 
-    torch.manual_seed(42)
-except ImportError:
-    pass
-
-random.seed(42)
+torch.manual_seed(42)
 
 
 def assert_california_module_result(result: torch.Tensor, idx=None):
@@ -193,7 +188,7 @@ class TestTorchModule:
             input_order=[california_model.input_names[0]],
         )
         # 2D old-format: (batch, n_features) = (3, 1) — ndim=2, last dim=1
-        input_2d = deepcopy(california_test_input_tensor[:, 0].unsqueeze(-1))  # (3, 1)
+        input_2d = california_test_input_tensor[:, 0, 0].unsqueeze(-1)  # (3, 1)
         # 3D new-format: (batch, n_features, 1) = (3, 1, 1) — ndim=3
         input_3d = input_2d.unsqueeze(-1)  # (3, 1, 1)
 
@@ -201,7 +196,7 @@ class TestTorchModule:
         result_3d = lume_module(input_3d)
 
         assert tuple(result_2d.shape) == (3,)
-        assert all(torch.isclose(result_2d, result_3d))
+        assert torch.all(torch.isclose(result_2d, result_3d))
 
     def test_module_call_single_sample(
         self, california_test_input_tensor, california_module
@@ -212,7 +207,7 @@ class TestTorchModule:
         )  # shape (1,8)
         result = california_module(input_tensor)
 
-        assert tuple(result.size()) == ()
+        assert tuple(result.size()) == (1,)
         assert_california_module_result(result, idx=idx)
 
     def test_module_call_n_samples(
@@ -244,7 +239,7 @@ class TestTorchModule:
         )
         result = lume_module(input_tensor)
 
-        assert tuple(result.size()) == ()
+        assert tuple(result.size()) == (1,)
         assert_california_module_result(result, idx=idx)
 
     def test_module_call_manipulate_output(
@@ -320,3 +315,40 @@ class TestTorchModule:
         assert tuple(test_y.shape) == (test_x.shape[0],)
         # GP should just predict the prior mean values for the posterior
         assert all(torch.isclose(mean, test_y))
+
+
+class TestTorchModuleND:
+    def test_nd_module_forward_single_batch(self, nd_model_and_data):
+        model, batch_input = nd_model_and_data
+        module = TorchModule(model=model)
+        # Input: (batch, num_vars, *array_shape) = (3, 1, 2, 3)
+        x = batch_input.unsqueeze(1)  # (3, 1, 2, 3)
+        result = module(x)
+        # Output: (batch, num_outputs, *array_shape) = (3, 1, 2, 3)
+        assert tuple(result.shape) == (3, 1, 2, 3)
+        # Identity model: output should equal input
+        assert torch.allclose(result[:, 0, :, :], batch_input, atol=1e-5)
+
+    def test_nd_module_validate_input_too_few_dims(self, nd_model_and_data):
+        model, batch_input = nd_model_and_data
+        module = TorchModule(model=model)
+        # array_shape=(2,3) so min_ndim=4; (3,2,3) is 3D — too few
+        with pytest.raises(ValueError, match="at least 4"):
+            module(batch_input)  # shape (3, 2, 3) — 3D, too few
+        with pytest.raises(ValueError, match="at least 4"):
+            module(batch_input[0])  # shape (2, 3) — 2D, too few
+
+    def test_nd_all_nd_property(self, nd_model_and_data):
+        model, _ = nd_model_and_data
+        module = TorchModule(model=model)
+        assert module._nd_inputs is True
+        assert module._nd_outputs is True
+        assert module._scalar_inputs is False
+        assert module._scalar_outputs is False
+
+    def test_scalar_all_scalars_property(self, california_model):
+        module = TorchModule(model=california_model)
+        assert module._scalar_inputs is True
+        assert module._scalar_outputs is True
+        assert module._nd_inputs is False
+        assert module._nd_outputs is False

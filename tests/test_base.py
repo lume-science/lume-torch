@@ -137,6 +137,114 @@ class TestBaseModel:
         input_dict[input_variables[0].name] = 6.0
         example_model.input_validation(input_dict)
 
+    def test_input_validation_partial_config(self, simple_variables):
+        example_model = ExampleModel(**simple_variables)
+        input_variables = simple_variables["input_variables"]
+
+        example_model.input_validation_config = {input_variables[0].name: "error"}
+
+        input_dict = {input_variables[0].name: 6.0, input_variables[1].name: 2.0}
+        with pytest.raises(ValueError):
+            example_model.input_validation(input_dict)
+
+        input_dict = {input_variables[0].name: 1.0, input_variables[1].name: 99.0}
+        example_model.input_validation(input_dict)
+
+    def test_input_validation_missing_input_validates_default(self, simple_variables):
+        """Variables absent from input_dict have their default_value validated
+        instead of raising, when require_all_inputs is False (the default).
+        Uses model_construct to bypass pydantic's own construction-time check
+        so that we can set an out-of-range default and confirm input_validation
+        catches it."""
+        # Bypass pydantic on both the variable AND the model to get an invalid default in
+        var_bad = TorchScalarVariable.model_construct(
+            name="bad",
+            default_value=99.0,
+            value_range=(0.0, 5.0),
+            read_only=False,
+            default_validation_config="error",
+        )
+        var_good = TorchScalarVariable(name="good", default_value=2.0)
+        model = ExampleModel.model_construct(
+            input_variables=[var_bad, var_good],
+            output_variables=simple_variables["output_variables"],
+            input_validation_config=None,
+            output_validation_config=None,
+        )
+        # "bad" is absent; its default (99.0) is outside range and config is "error"
+        with pytest.raises(ValueError):
+            model.input_validation({"good": 2.0})
+
+        # Try with no default
+        model.input_variables[0].default_value = None
+        # "bad" is absent; tries to grab the default but it's None, which should raise a ValueError about missing required input
+        with pytest.raises(ValueError):
+            model.input_validation({"good": 2.0})
+
+    def test_input_validation_check_no_missing_inputs(self, simple_variables):
+        """require_all_inputs=True raises ValueError when a variable is absent."""
+        example_model = ExampleModel(**simple_variables)
+        input_variables = simple_variables["input_variables"]
+
+        example_model.require_all_inputs = True
+
+        with pytest.raises(ValueError, match="Missing required input variable"):
+            example_model.input_validation(
+                {input_variables[0].name: 1.0},
+            )
+
+        # providing all inputs does not raise
+        example_model.input_validation(
+            {input_variables[0].name: 1.0, input_variables[1].name: 2.0},
+        )
+
+    def test_input_validation_check_read_only(self, simple_variables):
+        """Read-only enforcement is unconditional — driven by var.read_only."""
+        read_only_var = TorchScalarVariable(
+            name="fixed",
+            default_value=1.0,
+            read_only=True,
+        )
+        normal_var = simple_variables["input_variables"][1]
+        model = ExampleModel(
+            input_variables=[read_only_var, normal_var],
+            output_variables=simple_variables["output_variables"],
+        )
+        model.input_validation_config = {"fixed": "error"}
+
+        # value matches default — should pass
+        model.input_validation({"fixed": 1.0, normal_var.name: 2.0})
+
+        # value differs from default — always raises (no opt-out toggle)
+        with pytest.raises(Exception):
+            model.input_validation({"fixed": 9.0, normal_var.name: 2.0})
+
+    def test_input_validation_read_only_no_default_raises(self, simple_variables):
+        """Read-only input with no default_value raises when a value is provided."""
+        read_only_no_default = TorchScalarVariable(name="broken", read_only=True)
+        normal_var = simple_variables["input_variables"][1]
+        model = ExampleModel.model_construct(
+            input_variables=[read_only_no_default, normal_var],
+            output_variables=simple_variables["output_variables"],
+            input_validation_config=None,
+            output_validation_config=None,
+            require_all_inputs=False,
+        )
+        with pytest.raises(ValueError, match="read-only but has no default value"):
+            model.input_validation({"broken": 1.0, normal_var.name: 2.0})
+
+    def test_input_validation_config_unknown_key_raises(self, simple_variables):
+        """Setting input_validation_config with a key that isn't an input variable name raises."""
+        example_model = ExampleModel(**simple_variables)
+        with pytest.raises(ValueError, match="unknown variable name"):
+            example_model.input_validation_config = {"nonexistent_var": "error"}
+
+    def test_output_validation_config_unknown_key_raises(self, simple_variables):
+        """Setting output_validation_config with a key that isn't an output variable name raises."""
+        example_model = ExampleModel(**simple_variables)
+        with pytest.raises(ValueError, match="unknown variable name"):
+            example_model.output_validation_config = {"nonexistent_var": "error"}
+
     def test_output_validation(self, simple_variables):
         example_model = ExampleModel(**simple_variables)
         output_variables = simple_variables["output_variables"]

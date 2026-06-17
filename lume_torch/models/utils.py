@@ -52,6 +52,8 @@ def itemize_dict(
 
 def format_inputs(
     input_dict: dict[str, Union[float, torch.Tensor]],
+    tensor_kwargs: dict[str, Union[torch.device, torch.dtype]] = None,
+    squeeze: bool = False,
 ) -> dict[str, torch.Tensor]:
     """Formats values of the input dictionary as tensors.
 
@@ -66,11 +68,16 @@ def format_inputs(
         Dictionary of input variable names to tensors.
 
     """
-    formatted_inputs = {}
-    for var_name, value in input_dict.items():
-        v = value if isinstance(value, torch.Tensor) else torch.tensor(value)
-        formatted_inputs[var_name] = v
-    return formatted_inputs
+    tensor_kwargs = tensor_kwargs or {}
+    formatted_inputs = {
+        k: (v if isinstance(v, torch.Tensor) else torch.tensor(v)).to(**tensor_kwargs)
+        for k, v in input_dict.items()
+    }
+    return (
+        {k: v.squeeze(-1) for k, v in formatted_inputs.items()}
+        if squeeze
+        else formatted_inputs
+    )
 
 
 class InputDictModel(BaseModel):

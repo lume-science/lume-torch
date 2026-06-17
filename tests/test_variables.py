@@ -335,6 +335,11 @@ class TestTorchScalarVariable:
         var = TorchScalarVariable(name="test", read_only=False, is_constant=True)
         assert var.read_only is False
 
+    def test_unknown_field_raises(self):
+        """Misspelled or unknown fields should raise a ValidationError."""
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            TorchScalarVariable(name="test", range=(0.0, 1.0))  # should be value_range
+
 
 class TestTorchNDVariable:
     """Tests for TorchNDVariable class."""
@@ -345,6 +350,11 @@ class TestTorchNDVariable:
         assert var.name == "test_nd"
         assert var.shape == (10, 20)
         assert var.dtype == torch.float32
+
+    def test_unknown_field_raises(self):
+        """Misspelled or unknown fields should raise a ValidationError."""
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            TorchNDVariable(name="test", shape=(4,), shpe=(4,))  # typo: shpe vs shape
 
     def test_missing_shape_raises_validation_error(self):
         """Test that missing shape raises ValidationError."""

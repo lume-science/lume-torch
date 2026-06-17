@@ -9,7 +9,7 @@ from io import TextIOWrapper
 import yaml
 import torch
 import numpy as np
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from lume_torch.variables import (
     TorchScalarVariable,
@@ -363,6 +363,12 @@ class LUMETorch(BaseModel, ABC):
     output_validation_config : dict of str to ConfigEnum, optional
         Determines the behavior during output validation by specifying the validation
         config for each output variable: {var_name: value}. Value can be "warn", "error", or "none".
+    require_all_inputs : bool
+        When ``True``, :meth:`input_validation` raises ``ValueError`` for any
+        input variable absent from the dictionary.  When ``False`` (the
+        default), absent inputs fall back to their ``default_value``.
+        Subclasses such as ``ProbabilisticBaseModel`` override this to
+        ``True``.
 
     Methods
     -------
@@ -396,6 +402,15 @@ class LUMETorch(BaseModel, ABC):
     ]
     input_validation_config: Optional[dict[str, ConfigEnum]] = None
     output_validation_config: Optional[dict[str, ConfigEnum]] = None
+    require_all_inputs: bool = Field(
+        default=False,
+        exclude=True,
+        description=(
+            "When True, input_validation raises if any input variable is "
+            "absent from the provided dictionary.  Subclasses (e.g. "
+            "ProbabilisticBaseModel) may override the default."
+        ),
+    )
 
     model_config = ConfigDict(arbitrary_types_allowed=True, validate_assignment=True)
 
@@ -424,7 +439,8 @@ class LUMETorch(BaseModel, ABC):
             for name, val in value.items():
                 if isinstance(val, dict):
                     variable_class = get_variable(val["variable_class"])
-                    new_value.append(variable_class(name=name, **val))
+                    val_kwargs = {k: v for k, v in val.items() if k != "variable_class"}
+                    new_value.append(variable_class(name=name, **val_kwargs))
                 elif isinstance(
                     val,
                     (
@@ -485,6 +501,33 @@ class LUMETorch(BaseModel, ABC):
         verify_unique_variable_names(value)
         return value
 
+    @field_validator(
+        "input_validation_config", "output_validation_config", mode="before"
+    )
+    @classmethod
+    def _check_validation_config_is_dict(cls, value):
+        # Let pydantic handle type errors; only dicts need key checks (done in model_validator)
+        return value
+
+    @model_validator(mode="after")
+    def _check_validation_config_keys(self):
+        """Raise if any key in input_/output_validation_config is not a known variable name."""
+        if self.input_validation_config is not None:
+            invalid = set(self.input_validation_config) - set(self.input_names)
+            if invalid:
+                raise ValueError(
+                    f"input_validation_config contains unknown variable name(s): "
+                    f"{sorted(invalid)}. Valid input names: {sorted(self.input_names)}"
+                )
+        if self.output_validation_config is not None:
+            invalid = set(self.output_validation_config) - set(self.output_names)
+            if invalid:
+                raise ValueError(
+                    f"output_validation_config contains unknown variable name(s): "
+                    f"{sorted(invalid)}. Valid output names: {sorted(self.output_names)}"
+                )
+        return self
+
     @property
     def input_names(self) -> list[str]:
         return [var.name for var in self.input_variables]
@@ -492,18 +535,6 @@ class LUMETorch(BaseModel, ABC):
     @property
     def output_names(self) -> list[str]:
         return [var.name for var in self.output_variables]
-
-    @property
-    def default_input_validation_config(self) -> dict[str, ConfigEnum]:
-        """Determines default behavior during input validation (if input_validation_config is None)."""
-        return {var.name: var.default_validation_config for var in self.input_variables}
-
-    @property
-    def default_output_validation_config(self) -> dict[str, ConfigEnum]:
-        """Determines default behavior during output validation (if output_validation_config is None)."""
-        return {
-            var.name: var.default_validation_config for var in self.output_variables
-        }
 
     def evaluate(self, input_dict: dict[str, Any], **kwargs) -> dict[str, Any]:
         """Main evaluation function, child classes must implement the _evaluate method."""
@@ -523,7 +554,7 @@ class LUMETorch(BaseModel, ABC):
         Validates that the keys in the input dictionary are a subset of the valid variable names.
         """
         valid_keys = self.input_names if dict_name == "input" else self.output_names
-        valid_names = {name for name in valid_keys}
+        valid_names = set(valid_keys)
         invalid_keys = set(in_dict.keys()) - valid_names
         if invalid_keys:
             raise ValueError(
@@ -531,8 +562,23 @@ class LUMETorch(BaseModel, ABC):
                 f"Valid variables are: {sorted(valid_names)}"
             )
 
-    def input_validation(self, input_dict: dict[str, Any]) -> dict[str, Any]:
+    def input_validation(
+        self,
+        input_dict: dict[str, Any],
+    ) -> dict[str, Any]:
         """Validates input dictionary values against input variable specifications.
+
+        Read-only enforcement is unconditional: if a variable has
+        ``read_only=True``, the provided value is always checked against
+        the default.  Use the per-variable ``ConfigEnum`` (via
+        ``input_validation_config``) to control strictness (error / warn /
+        none).
+
+        Missing-input behaviour is controlled by the class-level attribute
+        ``require_all_inputs``.  When ``True`` (e.g. in
+        ``ProbabilisticBaseModel``), a ``ValueError`` is raised for any
+        absent input.  When ``False`` (the default), absent inputs fall
+        back to their ``default_value``.
 
         Parameters
         ----------
@@ -545,19 +591,47 @@ class LUMETorch(BaseModel, ABC):
             Validated input dictionary.
 
         """
-        for name, value in input_dict.items():
-            _config = (
+        # type/dtype check on raw user-provided values (before tensor conversion)
+        for var in self.input_variables:
+            config = (
                 None
                 if self.input_validation_config is None
-                else self.input_validation_config.get(name)
+                or var.name not in self.input_validation_config
+                else self.input_validation_config.get(var.name, None)
             )
-            var = self.input_variables[self.input_names.index(name)]
-            var.validate_value(value, config=_config)
+            if var.name in input_dict:
+                if var.read_only:
+                    if var.default_value is None:
+                        raise ValueError(
+                            f"Input variable '{var.name}' is read-only but has "
+                            f"no default value to validate against."
+                        )
+                    # Validates that the default value is valid
+                    # and then checks that the provided value matches the default value
+                    # for read-only variables *for all samples in a batch*
+                    var.validate_value(var.default_value, config=config)
+                    var.validate_read_only(input_dict[var.name], config=config)
+                else:
+                    var.validate_value(input_dict[var.name], config=config)
+            elif self.require_all_inputs:
+                raise ValueError(
+                    f"Missing required input variable '{var.name}' in input_dict."
+                )
+            else:
+                # check all other default values in case of dynamic changes to defaults
+                if var.default_value is None:
+                    raise ValueError(
+                        f"Input variable '{var.name}' is missing from input_dict and has no default value."
+                    )
+                var.validate_value(var.default_value, config=config)
 
         return input_dict
 
     def output_validation(self, output_dict: dict[str, Any]) -> dict[str, Any]:
         """Validates output dictionary values against output variable specifications.
+
+        Read-only enforcement is unconditional: if an output variable has
+        ``read_only=True``, the produced value is checked against the default.
 
         Parameters
         ----------
@@ -579,10 +653,14 @@ class LUMETorch(BaseModel, ABC):
             _config = (
                 None
                 if self.output_validation_config is None
-                else self.output_validation_config.get(name)
+                else self.output_validation_config.get(name, None)
             )
             var = self.output_variables[self.output_names.index(name)]
-            var.validate_value(value, config=_config)
+            if var.read_only and var.default_value is not None:
+                var.validate_value(var.default_value, config=_config)
+                var.validate_read_only(value, config=_config)
+            else:
+                var.validate_value(value, config=_config)
         return output_dict
 
     def to_json(self, **kwargs) -> str:

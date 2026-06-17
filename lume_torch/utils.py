@@ -177,10 +177,11 @@ def variables_from_dict(
         if key in ["input_variables", "output_variables"]:
             for var in value:
                 variable_class = get_variable(var["variable_class"])
+                var_kwargs = {k: v for k, v in var.items() if k != "variable_class"}
                 if key == "input_variables":
-                    input_variables.append(variable_class(**var))
+                    input_variables.append(variable_class(**var_kwargs))
                 elif key == "output_variables":
-                    output_variables.append(variable_class(**var))
+                    output_variables.append(variable_class(**var_kwargs))
     for variables in [input_variables, output_variables]:
         verify_unique_variable_names(variables)
     logger.debug(
