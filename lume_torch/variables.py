@@ -255,27 +255,15 @@ class TorchScalarVariable(_BaseScalarVariable):
             self.validate_value(self.default_value, ConfigEnum.ERROR)
         return self
 
-    def _unbatch(self, value: Tensor) -> Tensor:
-        """Unbatch a tensor with a batch dimension."""
+    def _unbatch(self, value: Tensor) -> tuple:
+        """Unbatch a tensor with arbitrary batch dimensions into individual scalar elements."""
         if value.ndim == 0:
             return (value,)
-        elif value.ndim > 0 and value.shape[-1] == 1:
-            return value.flatten()
-        else:
-            raise ValueError(
-                f"Expected a 0D scalar tensor or a 1D tensor with a single element in the "
-                f"last dimension, but got {value.ndim} dimensions with shape {value.shape}. "
-            )
+        return tuple(value.flatten())
 
     def _validate_value_type(self, value):
-        """Validates that value is a 0D/1D torch.Tensor or a regular float/int."""
-        if isinstance(value, Tensor):
-            if value.ndim != 0 and not (value.ndim == 1 and value.shape[0] == 1):
-                raise ValueError(
-                    f"Expected a 0D scalar tensor or a 1D tensor with a single element, "
-                    f"but got {value.ndim} dimensions with shape {value.shape}. "
-                )
-        else:
+        """Validates that value is a torch.Tensor or a regular float/int."""
+        if not isinstance(value, Tensor):
             # Delegate to parent class for non-tensor validation
             _BaseScalarVariable._validate_value_type(value)
 
