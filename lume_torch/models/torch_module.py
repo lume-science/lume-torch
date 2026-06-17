@@ -434,7 +434,7 @@ class FixedVariableModel(torch.nn.Module):
 
     """
 
-    def __init__(self, model: TorchModule, fixed_values):
+    def __init__(self, model: TorchModule, fixed_values, control_variables):
         """Initialize the FixedVariableModel class.
 
         This constructor sets up the model wrapper that separates control variables (to be optimized) from fixed
@@ -448,14 +448,14 @@ class FixedVariableModel(torch.nn.Module):
         fixed_values : dict of str to float
             Dictionary mapping PV (process variable) names to their initial measured values
             for all non-control variables
+        control_variable : list of control variables (to be vocs.variable_names to preserve the
+        variable ordering in xopt vocs)
 
         """
         super(FixedVariableModel, self).__init__()
         self.model = model
         self.all_inputs = list(model.input_order)
-        self.control_variables = [
-            pv for pv in self.all_inputs if pv not in fixed_values
-        ]
+        self.control_variables = control_variables
 
         # Create a buffer tensor to store the full input template
         # This is updated ONCE when fixed variables change, not on every forward call
