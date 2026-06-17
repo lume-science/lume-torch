@@ -168,11 +168,12 @@ class TestTorchScalarVariable:
         var = TorchScalarVariable(name="test")
         var.validate_value(torch.tensor([[5.0], [6.0]]))
 
-    def test_validate_value_tensor_nd_rejects_non_scalar(self):
-        """Test that tensors with more than 1 element are rejected."""
+    def test_validate_value_tensor_nd_accepts_arbitrary_shape(self):
+        """Test that tensors with arbitrary shape are accepted (no shape validation)."""
         var = TorchScalarVariable(name="test")
-        with pytest.raises(ValueError, match="Expected a 0D scalar"):
-            var.validate_value(torch.tensor([5.0, 6.0]))
+        var.validate_value(torch.tensor([5.0, 6.0]))
+        var.validate_value(torch.tensor([[1.0, 2.0], [3.0, 4.0]]))
+        var.validate_value(torch.rand(2, 3, 4))
 
     def test_validate_batched_checks_every_sample_error(self):
         """Batched scalar validation should apply value-range checks to every sample."""
